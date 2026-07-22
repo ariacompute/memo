@@ -1,0 +1,9 @@
+[package]
+name = "memory-embed"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+memory-core.workspace = true
+serde.workspace = true
