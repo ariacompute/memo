@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  release:
+    types:
+      - created
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-linux-x86_64:
+    name: Build & Test (x86_64 linux)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      ASSET_OS: linux
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build release binary
+        run: cargo build --release -p memory-cli
+      - name: Package release archive
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          ARCHIVE_NAME="memory_${VERSION}_${ASSET_OS}.tar.gz"
+          tar -czf "$ARCHIVE_NAME" -C target/release memory
+          echo "ASSET_PATH=$ARCHIVE_NAME" >> "$GITHUB_ENV"
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ env.ASSET_PATH }}
+          token: ${{ secrets.ARIACOMPUTE_TOKEN }}
+
+  build-windows:
+    name: Build & Test (x86_64 windows)
+    runs-on: windows-latest
+    permissions:
+      contents: write
+    env:
+      ASSET_OS: windows
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build release binary
+        run: cargo build --release -p memory-cli
+      - name: Package release archive
+        shell: pwsh
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          $version = $env:TAG_NAME.TrimStart('v')
+          $archiveName = "memory_${version}_${env:ASSET_OS}.zip"
+          Compress-Archive -Path target/release/memory.exe -DestinationPath $archiveName -Force
+          Add-Content -Path $env:GITHUB_ENV -Value "ASSET_PATH=$archiveName"
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ env.ASSET_PATH }}
+          token: ${{ secrets.ARIACOMPUTE_TOKEN }}
+
+  build-linux-arm64:
+    name: Build & Test (arm64 linux)
+    runs-on: ubuntu-24.04-arm
+    permissions:
+      contents: write
+    env:
+      ASSET_OS: linux_arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build release binary
+        run: cargo build --release -p memory-cli
+      - name: Package release archive
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          ARCHIVE_NAME="memory_${VERSION}_${ASSET_OS}.tar.gz"
+          tar -czf "$ARCHIVE_NAME" -C target/release memory
+          echo "ASSET_PATH=$ARCHIVE_NAME" >> "$GITHUB_ENV"
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ env.ASSET_PATH }}
+          token: ${{ secrets.ARIACOMPUTE_TOKEN }}
+
+  macos:
+    name: Build & Test (macos)
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    env:
+      ASSET_OS: macos
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Build
+        run: cargo build --workspace
+      - name: Test
+        run: cargo test --workspace
+      - name: Clippy
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Build release binary
+        run: cargo build --release -p memory-cli
+      - name: Package release archive
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="${TAG_NAME#v}"
+          ARCHIVE_NAME="memory_${VERSION}_${ASSET_OS}.tar.gz"
+          tar -czf "$ARCHIVE_NAME" -C target/release memory
+          echo "ASSET_PATH=$ARCHIVE_NAME" >> "$GITHUB_ENV"
+      - name: Upload release asset
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.release.tag_name }}
+          files: ${{ env.ASSET_PATH }}
+          token: ${{ secrets.ARIACOMPUTE_TOKEN }}
+
+  wasm:
+    name: Cross-compile check (wasm32)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+      - name: Build (core + embed, pure Rust)
+        run: cargo build --target wasm32-unknown-unknown -p memory-core -p memory-embed
