@@ -1,32 +1,36 @@
-# memory — 端侧长期记忆存储
+# aria memory
 
-Rust 实现的边缘/移动端本地优先（local-first）长期记忆存储，为 LLM Agent 提供记忆的增删改查、语义 + 关键词混合检索、巩固、去重与遗忘。零网络依赖、纯 Rust（不引入重型 ML 框架）。
+> Docs: [中文](./README_cn.md) ｜ [English](./README.md)
 
-参考：rqlite / turso（嵌入式持久化）、MemOS / mem0 / MemPalace（记忆管理）。
+Local-first long-term memory store for LLM Agents, built in Rust for edge/mobile deployment.
+Provides CRUD, semantic + keyword hybrid retrieval, consolidation, deduplication, and forgetting —
+with zero network dependency and zero heavy ML frameworks.
 
-## 架构
+Inspired by: rqlite / turso (embedded persistence), MemOS / mem0 / MemPalace (memory management).
 
-分层 workspace（trait 解耦）：
+## Architecture
+
+Layered cargo workspace (trait-decoupled):
 
 ```
-cli(memory-cli) → memory(编排) → storage(SQLite) / embed(本地嵌入) → core(模型/错误/trait)
+cli(memory-cli) → memory(orchestration) → storage(SQLite) / embed(local embedding) → core(models/errors/traits)
 ```
 
-## 快速开始
+## Quick Start
 
 ```bash
 cargo build
 cargo test
-cargo run -p memory-cli -- add --type working --content "用户喜欢 Rust" --importance 0.8
+cargo run -p memory-cli -- add --type working --content "User likes Rust" --importance 0.8
 cargo run -p memory-cli -- search --text "Rust" --top-k 5
 ```
 
-## 目录
+## Directory
 
-- `crates/core`：数据模型、统一错误 `MemoryError`、trait
-- `crates/embed`：本地轻量 embedder（ngram + 哈希/TF-IDF 向量）+ 余弦相似度
-- `crates/storage`：rusqlite 嵌入式持久化后端
-- `crates/memory`：记忆管理编排与生命周期
-- `crates/cli`：命令行入口
+- `crates/core` — data models, unified `MemoryError`, traits
+- `crates/embed` — lightweight local embedder (ngram + hash/TF-IDF vectors) + cosine similarity
+- `crates/storage` — rusqlite bundled embedded persistence backend
+- `crates/memory` — memory management orchestration & lifecycle
+- `crates/cli` — command-line entry point
 
-详见 `AGENTS.md` 与 `requirements.md`。
+See `AGENTS.md` and `requirements.md` for details.
