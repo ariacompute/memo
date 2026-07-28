@@ -13,7 +13,7 @@ Inspired by: rqlite / turso (embedded persistence), MemOS / mem0 / MemPalace (me
 Layered cargo workspace (trait-decoupled):
 
 ```
-cli(memory-cli) → memory(orchestration) → storage(SQLite) / embed(local embedding) → core(models/errors/traits)
+cli(aria-memory) → memory(orchestration) → storage(SQLite) / embed(local embedding) → core(models/errors/traits)
 ```
 
 ## Quick Start
@@ -21,8 +21,8 @@ cli(memory-cli) → memory(orchestration) → storage(SQLite) / embed(local embe
 ```bash
 cargo build
 cargo test
-cargo run -p memory-cli -- add --type working --content "User likes Rust" --importance 0.8
-cargo run -p memory-cli -- search --text "Rust" --top-k 5
+cargo run -p aria-memory -- add --type working --content "User likes Rust" --importance 0.8
+cargo run -p aria-memory -- search --text "Rust" --top-k 5
 ```
 
 ## Directory

@@ -28,7 +28,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Build release binary
-        run: cargo build --release -p memory-cli
+        run: cargo build --release -p aria-memory
       - name: Package release archive
         shell: bash
         env:
@@ -64,7 +64,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Build release binary
-        run: cargo build --release -p memory-cli
+        run: cargo build --release -p aria-memory
       - name: Package release archive
         shell: pwsh
         env:
@@ -72,7 +72,7 @@ jobs:
         run: |
           $version = $env:TAG_NAME.TrimStart('v')
           $archiveName = "memory_${version}_${env:ASSET_OS}.zip"
-          Compress-Archive -Path target/release/memory.exe -DestinationPath $archiveName -Force
+          Compress-Archive -Path target/release/aria-memory.exe -DestinationPath $archiveName -Force
           Add-Content -Path $env:GITHUB_ENV -Value "ASSET_PATH=$archiveName"
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
@@ -100,7 +100,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Build release binary
-        run: cargo build --release -p memory-cli
+        run: cargo build --release -p aria-memory
       - name: Package release archive
         shell: bash
         env:
@@ -136,7 +136,7 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
       - name: Build release binary
-        run: cargo build --release -p memory-cli
+        run: cargo build --release -p aria-memory
       - name: Package release archive
         shell: bash
         env:

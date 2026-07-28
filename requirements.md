@@ -69,7 +69,7 @@ pub struct ScoredMemory { pub memory: Memory, pub score: f32 }
 - `search(query) -> Result<Vec<ScoredMemory>>`（语义+关键词混合，过滤 deleted）
 - `consolidate(id, delta_importance)` / `dedup(threshold)` -> 见 §1.1
 
-### 2.4 CLI（memory-cli，二进制名 `memory`）
+### 2.4 CLI（aria-memory，二进制名 `memory`）
 - `memory add --type working --content "..." --importance 0.8`
 - `memory get --id <id>`
 - `memory search --text "..." --top-k 5`

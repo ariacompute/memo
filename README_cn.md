@@ -11,7 +11,7 @@ Rust 实现的边缘/移动端本地优先（local-first）长期记忆存储，
 分层 cargo workspace（trait 解耦）：
 
 ```
-cli(memory-cli) → memory(编排) → storage(SQLite) / embed(本地嵌入) → core(模型/错误/trait)
+cli(aria-memory) → memory(编排) → storage(SQLite) / embed(本地嵌入) → core(模型/错误/trait)
 ```
 
 ## 快速开始
@@ -19,8 +19,8 @@ cli(memory-cli) → memory(编排) → storage(SQLite) / embed(本地嵌入) →
 ```bash
 cargo build
 cargo test
-cargo run -p memory-cli -- add --type working --content "用户喜欢 Rust" --importance 0.8
-cargo run -p memory-cli -- search --text "Rust" --top-k 5
+cargo run -p aria-memory -- add --type working --content "用户喜欢 Rust" --importance 0.8
+cargo run -p aria-memory -- search --text "Rust" --top-k 5
 ```
 
 ## 目录

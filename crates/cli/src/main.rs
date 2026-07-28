@@ -1,4 +1,4 @@
-//! memory-cli: 端侧长期记忆存储命令行入口。
+//! aria-memory: 端侧长期记忆存储命令行入口。
 mod commands;
 
 use clap::{Parser, Subcommand};

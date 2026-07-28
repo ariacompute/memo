@@ -12,7 +12,7 @@
 5. [x] 实现 `memory-embed`：`LocalEmbedder`（ngram+哈希/TF-IDF 向量）、`cosine` + 单测（正常+异常：空文本/零向量/相似度）
 6. [x] 实现 `memory-storage`：`SqliteStore`（建表/迁移/索引/CRUD/批量/混合检索）、`StorageBackend` 实现与 `ReplicatedBackend` 占位 + 单测（重复 id/缺失/空内容/损坏 DB/损坏 BLOB）
 7. [x] 实现 `memory`：`MemoryManager`（add/get/update/forget/search/consolidate/dedup）、`lifecycle`（decay/prune）+ 单测（正常+异常，端到端黄金路径）
-8. [x] 实现 `memory-cli`：add/get/search/list/forget 命令与默认 `LocalEmbedder` + `SqliteStore` + 单测
+8. [x] 实现 `aria-memory`：add/get/search/list/forget 命令与默认 `LocalEmbedder` + `SqliteStore` + 单测
 9. [x] 验收：`cargo test` 全绿（38 tests）、`cargo clippy --all-targets` 无告警、`cargo build --target wasm32-unknown-unknown -p memory-core -p memory-embed` 通过
 
 ## 验证

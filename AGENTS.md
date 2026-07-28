@@ -28,7 +28,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - `cargo test -p memory-core`：单 crate 测试
 - `cargo build`：构建主目标
 - `cargo clippy --all-targets`：静态检查
-- `cargo run -p memory-cli -- --help`：查看 CLI
+- `cargo run -p aria-memory -- --help`：查看 CLI
 
 ## 进行中需求（M1）
 见 task.md。M1 待落地：三层记忆模型、SQLite 持久化、本地嵌入、混合检索、巩固/去重/遗忘、CLI。验收基线：cargo test 全绿、clippy 无告警、交叉编译（aarch64-android/wasm32）通过。
