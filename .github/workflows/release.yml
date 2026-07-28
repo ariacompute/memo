@@ -36,7 +36,7 @@ jobs:
         run: |
           VERSION="${TAG_NAME#v}"
           ARCHIVE_NAME="memory_${VERSION}_${ASSET_OS}.tar.gz"
-          tar -czf "$ARCHIVE_NAME" -C target/release memory
+          tar -czf "$ARCHIVE_NAME" -C target/release aria-memory
           echo "ASSET_PATH=$ARCHIVE_NAME" >> "$GITHUB_ENV"
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
@@ -108,7 +108,7 @@ jobs:
         run: |
           VERSION="${TAG_NAME#v}"
           ARCHIVE_NAME="memory_${VERSION}_${ASSET_OS}.tar.gz"
-          tar -czf "$ARCHIVE_NAME" -C target/release memory
+          tar -czf "$ARCHIVE_NAME" -C target/release aria-memory
           echo "ASSET_PATH=$ARCHIVE_NAME" >> "$GITHUB_ENV"
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
@@ -144,7 +144,7 @@ jobs:
         run: |
           VERSION="${TAG_NAME#v}"
           ARCHIVE_NAME="memory_${VERSION}_${ASSET_OS}.tar.gz"
-          tar -czf "$ARCHIVE_NAME" -C target/release memory
+          tar -czf "$ARCHIVE_NAME" -C target/release aria-memory
           echo "ASSET_PATH=$ARCHIVE_NAME" >> "$GITHUB_ENV"
       - name: Upload release asset
         uses: softprops/action-gh-release@v2
