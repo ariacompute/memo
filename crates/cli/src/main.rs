@@ -51,6 +51,19 @@ enum Command {
         #[arg(long)]
         id: String,
     },
+    /// 进程内微基准（JSON），供 benches/ 解析
+    Bench {
+        /// 写入与检索次数（库规模）
+        #[arg(long, default_value_t = 1000)]
+        size: usize,
+        #[arg(long, default_value_t = 5)]
+        top_k: usize,
+        #[arg(long, default_value_t = 10)]
+        warmup: usize,
+        /// 保留兼容；输出始终为 JSON
+        #[arg(long, default_value_t = true)]
+        json: bool,
+    },
 }
 
 fn build_manager(db: &str) -> MemoryManager {
@@ -60,27 +73,47 @@ fn build_manager(db: &str) -> MemoryManager {
 }
 
 fn run(cli: Cli) -> Result<()> {
-    let manager = build_manager(&cli.db);
     match cli.command {
-        Command::Add {
-            r#type,
-            content,
-            importance,
+        Command::Bench {
+            size,
+            top_k,
+            warmup,
+            json: _,
         } => {
-            let id = commands::add(&manager, &r#type, &content, importance)?;
-            println!("{id}");
+            let path = std::env::temp_dir().join(format!(
+                "aria-memory-bench-{}.db",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_file(&path);
+            let manager = build_manager(path.to_str().unwrap_or(":memory:"));
+            println!("{}", commands::bench(&manager, size, top_k, warmup)?);
+            let _ = std::fs::remove_file(&path);
         }
-        Command::Get { id } => {
-            println!("{}", commands::get(&manager, &id)?);
-        }
-        Command::Search { text, top_k } => {
-            println!("{}", commands::search(&manager, &text, top_k)?);
-        }
-        Command::List { r#type } => {
-            println!("{}", commands::list(&manager, r#type.as_deref())?);
-        }
-        Command::Forget { id } => {
-            println!("{}", commands::forget(&manager, &id)?);
+        other => {
+            let manager = build_manager(&cli.db);
+            match other {
+                Command::Add {
+                    r#type,
+                    content,
+                    importance,
+                } => {
+                    let id = commands::add(&manager, &r#type, &content, importance)?;
+                    println!("{id}");
+                }
+                Command::Get { id } => {
+                    println!("{}", commands::get(&manager, &id)?);
+                }
+                Command::Search { text, top_k } => {
+                    println!("{}", commands::search(&manager, &text, top_k)?);
+                }
+                Command::List { r#type } => {
+                    println!("{}", commands::list(&manager, r#type.as_deref())?);
+                }
+                Command::Forget { id } => {
+                    println!("{}", commands::forget(&manager, &id)?);
+                }
+                Command::Bench { .. } => unreachable!(),
+            }
         }
     }
     Ok(())

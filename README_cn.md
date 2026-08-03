@@ -23,6 +23,21 @@ cargo run -p aria-memory -- add --type working --content "用户喜欢 Rust" --i
 cargo run -p aria-memory -- search --text "Rust" --top-k 5
 ```
 
+## 对比评测
+
+对比系统：mem0 / MemOS / MemPalace / Zep / Letta。
+
+- 功能矩阵：[docs/compare.md](./docs/compare.md)
+- 评测说明与结果：[docs/bench_results.md](./docs/bench_results.md)
+- Python 编排（Track A 存储/检索 + Track B 端到端质量）：[benches/README.md](./benches/README.md)
+
+```bash
+cargo run -p aria-memory -- bench --size 1000 --json
+pip install -r benches/requirements.txt
+python benches/run.py --track a --size 1000
+python benches/run.py --track b --dry-run
+```
+
 ## 目录
 
 - `crates/core` — 数据模型、统一错误 `MemoryError`、trait
@@ -30,3 +45,5 @@ cargo run -p aria-memory -- search --text "Rust" --top-k 5
 - `crates/storage` — rusqlite 嵌入式持久化后端
 - `crates/memory` — 记忆管理编排与生命周期
 - `crates/cli` — 命令行入口
+- `benches/` — 业界对比评测
+- `docs/` — 功能矩阵与评测结果说明

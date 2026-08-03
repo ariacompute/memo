@@ -25,6 +25,21 @@ cargo run -p aria-memory -- add --type working --content "User likes Rust" --imp
 cargo run -p aria-memory -- search --text "Rust" --top-k 5
 ```
 
+## Benchmarks & Comparison
+
+Compare against: mem0 / MemOS / MemPalace / Zep / Letta.
+
+- Feature matrix: [docs/compare.md](./docs/compare.md)
+- Results guide: [docs/bench_results.md](./docs/bench_results.md)
+- Python harness (Track A storage/retrieval + Track B end-to-end quality): [benches/README.md](./benches/README.md)
+
+```bash
+cargo run -p aria-memory -- bench --size 1000 --json
+pip install -r benches/requirements.txt
+python benches/run.py --track a --size 1000
+python benches/run.py --track b --dry-run
+```
+
 ## Directory
 
 - `crates/core` — data models, unified `MemoryError`, traits
@@ -32,3 +47,5 @@ cargo run -p aria-memory -- search --text "Rust" --top-k 5
 - `crates/storage` — rusqlite bundled embedded persistence backend
 - `crates/memory` — memory management orchestration & lifecycle
 - `crates/cli` — command-line entry point
+- `benches/` — industry comparison harness
+- `docs/` — feature matrix and benchmark notes

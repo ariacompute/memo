@@ -1,0 +1,2 @@
+# Track A/B 编排依赖（系统 SDK 均为 optional）
+# pip install -r benches/requirements.txt

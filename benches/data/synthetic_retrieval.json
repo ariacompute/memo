@@ -1,0 +1,79 @@
+{
+  "seed": 42,
+  "corpus": [
+    {
+      "id": "d1",
+      "content": "User likes Rust systems programming and prefers local-first offline tools."
+    },
+    {
+      "id": "d2",
+      "content": "The team decided to use SQLite for embedded persistence on mobile devices."
+    },
+    {
+      "id": "d3",
+      "content": "Alice's birthday is March 14 and she enjoys hiking in the mountains."
+    },
+    {
+      "id": "d4",
+      "content": "API rate limit is 100 requests per minute for the free tier."
+    },
+    {
+      "id": "d5",
+      "content": "Project aria-memory consolidates, deduplicates, and forgets stale memories."
+    },
+    {
+      "id": "d6",
+      "content": "Python microbenchmarks live under benches/ and compare mem0 MemOS MemPalace Zep Letta."
+    },
+    {
+      "id": "d7",
+      "content": "The coffee shop on Market Street closes at 8pm on weekdays."
+    },
+    {
+      "id": "d8",
+      "content": "Hybrid retrieval combines cosine semantic similarity with keyword LIKE matching."
+    }
+  ],
+  "queries": [
+    {
+      "id": "q1",
+      "text": "What programming language does the user prefer for systems work?",
+      "relevant_ids": ["d1"]
+    },
+    {
+      "id": "q2",
+      "text": "embedded database for mobile",
+      "relevant_ids": ["d2"]
+    },
+    {
+      "id": "q3",
+      "text": "When is Alice's birthday?",
+      "relevant_ids": ["d3"]
+    },
+    {
+      "id": "q4",
+      "text": "free tier API rate limit",
+      "relevant_ids": ["d4"]
+    },
+    {
+      "id": "q5",
+      "text": "memory consolidation and forgetting",
+      "relevant_ids": ["d5"]
+    },
+    {
+      "id": "q6",
+      "text": "semantic and keyword hybrid search",
+      "relevant_ids": ["d8"]
+    },
+    {
+      "id": "q7",
+      "text": "compare industry memory systems in python benches",
+      "relevant_ids": ["d6"]
+    },
+    {
+      "id": "q8",
+      "text": "Market Street coffee shop hours",
+      "relevant_ids": ["d7"]
+    }
+  ]
+}
