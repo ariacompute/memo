@@ -32,5 +32,3 @@ cargo run -p aria-memory -- search --text "Rust" --top-k 5
 - `crates/storage` — rusqlite bundled embedded persistence backend
 - `crates/memory` — memory management orchestration & lifecycle
 - `crates/cli` — command-line entry point
-
-See `AGENTS.md` and `requirements.md` for details.

@@ -30,5 +30,3 @@ cargo run -p aria-memory -- search --text "Rust" --top-k 5
 - `crates/storage` — rusqlite 嵌入式持久化后端
 - `crates/memory` — 记忆管理编排与生命周期
 - `crates/cli` — 命令行入口
-
-详见 `AGENTS.md` 与 `requirements.md`。
