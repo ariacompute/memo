@@ -1,6 +1,6 @@
 # aria memory
 
-> 文档语言：[中文](./README_cn.md) ｜ [English](./README.md)
+[English](README.md) | [中文](README_cn.md)
 
 Rust 实现的边缘/移动端本地优先（local-first）长期记忆存储，为 LLM Agent 提供记忆的增删改查、语义 + 关键词混合检索、巩固、去重与遗忘。零网络依赖、纯 Rust（不引入重型 ML 框架）。
 

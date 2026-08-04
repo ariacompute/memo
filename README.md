@@ -1,6 +1,6 @@
 # aria memory
 
-> Docs: [中文](./README_cn.md) ｜ [English](./README.md)
+[English](README.md) | [中文](README_cn.md)
 
 Local-first long-term memory store for LLM Agents, built in Rust for edge/mobile deployment.
 Provides CRUD, semantic + keyword hybrid retrieval, consolidation, deduplication, and forgetting —
