@@ -47,3 +47,11 @@ python benches/run.py --track b --dry-run
 - `crates/cli` — 命令行入口
 - `benches/` — 业界对比评测
 - `docs/` — 功能矩阵与评测结果说明
+
+## 工程规范
+
+本仓库遵循 Harness Engineering 理念：
+
+- [`AGENTS.md`](AGENTS.md)：Agent 工程上下文入口与目录索引
+- [`requirements.md`](requirements.md)：需求规格（功能边界/异常/验收标准，人工审核制）
+- [`task.md`](task.md)：实施任务清单

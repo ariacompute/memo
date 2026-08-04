@@ -49,3 +49,11 @@ python benches/run.py --track b --dry-run
 - `crates/cli` — command-line entry point
 - `benches/` — industry comparison harness
 - `docs/` — feature matrix and benchmark notes
+
+## Engineering Conventions
+
+This repository follows the Harness Engineering philosophy:
+
+- [`AGENTS.md`](AGENTS.md): Agent engineering context entry and directory index
+- [`requirements.md`](requirements.md): Requirements spec (feature boundaries/exceptions/acceptance criteria, human-review-gated)
+- [`task.md`](task.md): Implementation task checklist
