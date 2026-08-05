@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import BackendInfo, MemoryBackend, SearchHit
+from .base import BackendInfo, MemoBackend, SearchHit
 from .skip import SkipBackend
 
 
-class MemPalaceBackend(MemoryBackend):
+class MemPalaceBackend(MemoBackend):
     def __init__(self) -> None:
-        self._impl: MemoryBackend
+        self._impl: MemoBackend
         try:
             import mempalace  # type: ignore  # noqa: F401
 

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import BackendInfo, MemoryBackend, SearchHit
+from .base import BackendInfo, MemoBackend, SearchHit
 
 
-class SkipBackend(MemoryBackend):
+class SkipBackend(MemoBackend):
     """不可用时的占位后端：info 标明 skipped，调用 add/search 抛错。"""
 
     def __init__(self, name: str, reason: str, includes_network: bool = True) -> None:

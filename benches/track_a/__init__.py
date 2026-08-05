@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from adapters import build_backend
-from adapters.aria_memory import AriaMemoryBackend
+from adapters.aria_memo import AriaMemoBackend
 from common import timed_ms, utc_stamp, write_report
 
 
@@ -29,7 +29,7 @@ def run_microbench(systems: list[str], size: int, top_k: int, warmup: int) -> di
                 }
             )
             continue
-        if isinstance(backend, AriaMemoryBackend):
+        if isinstance(backend, AriaMemoBackend):
             row = backend.microbench_json(size=size, top_k=top_k, warmup=warmup)
             row["name"] = "aria"
             rows.append(row)
@@ -42,14 +42,14 @@ def run_microbench(systems: list[str], size: int, top_k: int, warmup: int) -> di
             for i in range(size):
                 _, ms = timed_ms(
                     lambda i=i: backend.add(
-                        f"bench item {i}: user prefers rust and local-first memory {i}"
+                        f"bench item {i}: user prefers rust and local-first memo {i}"
                     )
                 )
                 add_ms.append(ms)
             search_ms: list[float] = []
             queries = [
                 "rust systems programming",
-                "local-first memory",
+                "local-first memo",
                 "user prefers",
                 "bench item",
                 "programming",

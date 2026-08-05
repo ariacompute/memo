@@ -4,7 +4,7 @@ members = [
     "crates/core",
     "crates/storage",
     "crates/embed",
-    "crates/memory",
+    "crates/memo",
     "crates/cli",
 ]
 
@@ -12,13 +12,13 @@ members = [
 version = "0.1.0"
 edition = "2021"
 license = "Apache-2.0"
-repository = "https://github.com/ariacompute/memory"
+repository = "https://github.com/ariacompute/memo"
 
 [workspace.dependencies]
-memory-core = { path = "crates/core" }
-memory-storage = { path = "crates/storage" }
-memory-embed = { path = "crates/embed" }
-memory = { path = "crates/memory" }
+memo-core = { path = "crates/core" }
+memo-storage = { path = "crates/storage" }
+memo-embed = { path = "crates/embed" }
+memo = { path = "crates/memo" }
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

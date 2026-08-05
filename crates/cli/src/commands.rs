@@ -1,16 +1,16 @@
-use memory::MemoryManager;
-use memory_core::{MemoryType, Result, SearchQuery};
+use memo::MemoManager;
+use memo_core::{MemoType, Result, SearchQuery};
 use std::collections::HashMap;
 
 /// 新增记忆并返回 id。
-pub fn add(manager: &MemoryManager, mem_type: &str, content: &str, importance: f32) -> Result<String> {
-    let mt = <MemoryType as std::str::FromStr>::from_str(mem_type)?;
+pub fn add(manager: &MemoManager, mem_type: &str, content: &str, importance: f32) -> Result<String> {
+    let mt = <MemoType as std::str::FromStr>::from_str(mem_type)?;
     let id = manager.add(content, mt, HashMap::new(), importance)?;
     Ok(id)
 }
 
 /// 按 id 获取记忆（JSON），不存在返回 "not found"。
-pub fn get(manager: &MemoryManager, id: &str) -> Result<String> {
+pub fn get(manager: &MemoManager, id: &str) -> Result<String> {
     match manager.get(&id.to_string())? {
         Some(m) => Ok(serde_json::to_string_pretty(&m).unwrap_or_else(|_| "{}".to_string())),
         None => Ok("not found".to_string()),
@@ -18,30 +18,30 @@ pub fn get(manager: &MemoryManager, id: &str) -> Result<String> {
 }
 
 /// 混合检索，返回逐行 `score\tcontent`。
-pub fn search(manager: &MemoryManager, text: &str, top_k: usize) -> Result<String> {
+pub fn search(manager: &MemoManager, text: &str, top_k: usize) -> Result<String> {
     let mut q = SearchQuery::new(text);
     q.top_k = top_k;
     let rs = manager.search(q)?;
     let lines: Vec<String> = rs
         .iter()
-        .map(|r| format!("{:.3}\t{}", r.score, r.memory.content))
+        .map(|r| format!("{:.3}\t{}", r.score, r.memo.content))
         .collect();
     Ok(lines.join("\n"))
 }
 
 /// 列出记忆（可按类型过滤）。
-pub fn list(manager: &MemoryManager, mem_type: Option<&str>) -> Result<String> {
-    let mt = mem_type.map(<MemoryType as std::str::FromStr>::from_str).transpose()?;
+pub fn list(manager: &MemoManager, mem_type: Option<&str>) -> Result<String> {
+    let mt = mem_type.map(<MemoType as std::str::FromStr>::from_str).transpose()?;
     let ms = manager.list(mt)?;
     let lines: Vec<String> = ms
         .iter()
-        .map(|m| format!("{} [{:?}] {}", m.id, m.memory_type, m.content))
+        .map(|m| format!("{} [{:?}] {}", m.id, m.memo_type, m.content))
         .collect();
     Ok(lines.join("\n"))
 }
 
 /// 遗忘记忆，返回 "forgotten" 或 "not found"。
-pub fn forget(manager: &MemoryManager, id: &str) -> Result<String> {
+pub fn forget(manager: &MemoManager, id: &str) -> Result<String> {
     Ok(if manager.forget(&id.to_string())? {
         "forgotten".to_string()
     } else {
@@ -50,22 +50,22 @@ pub fn forget(manager: &MemoryManager, id: &str) -> Result<String> {
 }
 
 /// 进程内微基准：add / search，输出 JSON（供 `benches/` Python 解析）。
-pub fn bench(manager: &MemoryManager, size: usize, top_k: usize, warmup: usize) -> Result<String> {
+pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize) -> Result<String> {
     if size == 0 {
-        return Err(memory_core::MemoryError::InvalidParam(
+        return Err(memo_core::MemoError::InvalidParam(
             "bench size must be > 0".into(),
         ));
     }
     if top_k == 0 {
-        return Err(memory_core::MemoryError::InvalidParam(
+        return Err(memo_core::MemoError::InvalidParam(
             "bench top_k must be > 0".into(),
         ));
     }
 
     for i in 0..warmup {
         let _ = manager.add(
-            &format!("warmup memory content {i}"),
-            MemoryType::Working,
+            &format!("warmup memo content {i}"),
+            MemoType::Working,
             HashMap::new(),
             0.5,
         )?;
@@ -74,16 +74,16 @@ pub fn bench(manager: &MemoryManager, size: usize, top_k: usize, warmup: usize) 
     let mut add_ms: Vec<f64> = Vec::with_capacity(size);
     for i in 0..size {
         let content = format!(
-            "bench item {i}: user prefers rust systems programming and local-first memory {i}"
+            "bench item {i}: user prefers rust systems programming and local-first memo {i}"
         );
         let t0 = std::time::Instant::now();
-        manager.add(&content, MemoryType::Working, HashMap::new(), 0.5)?;
+        manager.add(&content, MemoType::Working, HashMap::new(), 0.5)?;
         add_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
     }
 
     let queries = [
         "rust systems programming",
-        "local-first memory",
+        "local-first memo",
         "user prefers",
         "bench item",
         "programming",
@@ -101,7 +101,7 @@ pub fn bench(manager: &MemoryManager, size: usize, top_k: usize, warmup: usize) 
     let add_sum: f64 = add_ms.iter().sum();
     let search_sum: f64 = search_ms.iter().sum();
     let report = serde_json::json!({
-        "system": "aria-memory",
+        "system": "aria-memo",
         "includes_network": false,
         "offline": true,
         "size": size,
@@ -133,14 +133,14 @@ fn percentile(xs: &mut [f64], p: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memory_embed::LocalEmbedder;
-    use memory_storage::SqliteStore;
+    use memo_embed::LocalEmbedder;
+    use memo_storage::SqliteStore;
     use std::sync::Arc;
 
-    fn mgr() -> MemoryManager {
-        let e: Arc<dyn memory_core::Embedder> = Arc::new(LocalEmbedder::new(64));
+    fn mgr() -> MemoManager {
+        let e: Arc<dyn memo_core::Embedder> = Arc::new(LocalEmbedder::new(64));
         let s = SqliteStore::open(":memory:").unwrap();
-        MemoryManager::new(e, Arc::new(s))
+        MemoManager::new(e, Arc::new(s))
     }
 
     #[test]
@@ -177,7 +177,7 @@ mod tests {
         let m = mgr();
         let out = bench(&m, 8, 3, 1).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
-        assert_eq!(v["system"], "aria-memory");
+        assert_eq!(v["system"], "aria-memo");
         assert!(v["add"]["p50_ms"].as_f64().unwrap() >= 0.0);
         assert!(v["search"]["ops_per_sec"].as_f64().unwrap() > 0.0);
     }

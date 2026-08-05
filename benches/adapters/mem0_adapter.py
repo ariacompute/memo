@@ -3,11 +3,11 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .base import BackendInfo, MemoryBackend, SearchHit
+from .base import BackendInfo, MemoBackend, SearchHit
 
 
-class Mem0Backend(MemoryBackend):
-    """mem0：优先 MemoryClient（云）；否则尝试 Memory（OSS）。"""
+class Mem0Backend(MemoBackend):
+    """mem0：优先 MemoryClient（云）；否则尝试 Memo（OSS）。"""
 
     def __init__(self) -> None:
         self._client: Any = None

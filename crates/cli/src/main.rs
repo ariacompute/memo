@@ -1,18 +1,18 @@
-//! aria-memory: 端侧长期记忆存储命令行入口。
+//! aria-memo: 端侧长期记忆存储命令行入口。
 mod commands;
 
 use clap::{Parser, Subcommand};
-use memory::MemoryManager;
-use memory_core::{Embedder, Result};
-use memory_embed::LocalEmbedder;
-use memory_storage::SqliteStore;
+use memo::MemoManager;
+use memo_core::{Embedder, Result};
+use memo_embed::LocalEmbedder;
+use memo_storage::SqliteStore;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "memory", about = "端侧长期记忆存储 CLI")]
+#[command(name = "memo", about = "端侧长期记忆存储 CLI")]
 struct Cli {
-    /// 数据库路径，默认 ./memory.db
-    #[arg(long, default_value = "memory.db")]
+    /// 数据库路径，默认 ./memo.db
+    #[arg(long, default_value = "memo.db")]
     db: String,
     #[command(subcommand)]
     command: Command,
@@ -66,10 +66,10 @@ enum Command {
     },
 }
 
-fn build_manager(db: &str) -> MemoryManager {
+fn build_manager(db: &str) -> MemoManager {
     let embedder: Arc<dyn Embedder> = Arc::new(LocalEmbedder::new(64));
     let store = SqliteStore::open(db).expect("failed to open store");
-    MemoryManager::new(embedder, Arc::new(store))
+    MemoManager::new(embedder, Arc::new(store))
 }
 
 fn run(cli: Cli) -> Result<()> {
@@ -81,7 +81,7 @@ fn run(cli: Cli) -> Result<()> {
             json: _,
         } => {
             let path = std::env::temp_dir().join(format!(
-                "aria-memory-bench-{}.db",
+                "aria-memo-bench-{}.db",
                 std::process::id()
             ));
             let _ = std::fs::remove_file(&path);

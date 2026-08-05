@@ -1,12 +1,12 @@
-use memory_core::{MemoryError, Result};
+use memo_core::{MemoError, Result};
 
 /// 余弦相似度。任一向量为空或维度不一致返回错误；仅当某向量模为 0 时返回 0（无方向）。
 pub fn cosine(a: &[f32], b: &[f32]) -> Result<f32> {
     if a.is_empty() || b.is_empty() {
-        return Err(MemoryError::EmptyEmbedding);
+        return Err(MemoError::EmptyEmbedding);
     }
     if a.len() != b.len() {
-        return Err(MemoryError::InvalidParam(format!(
+        return Err(MemoError::InvalidParam(format!(
             "embedding dim mismatch: {} vs {}",
             a.len(),
             b.len()
@@ -42,12 +42,12 @@ mod tests {
     fn dim_mismatch_errors() {
         assert!(matches!(
             cosine(&[1.0], &[1.0, 0.0]),
-            Err(MemoryError::InvalidParam(_))
+            Err(MemoError::InvalidParam(_))
         ));
     }
 
     #[test]
     fn empty_errors() {
-        assert!(matches!(cosine(&[], &[1.0]), Err(MemoryError::EmptyEmbedding)));
+        assert!(matches!(cosine(&[], &[1.0]), Err(MemoError::EmptyEmbedding)));
     }
 }

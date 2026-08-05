@@ -5,9 +5,9 @@ from __future__ import annotations
 真实分数需要：
 1. 下载官方数据集到 benches/data/
 2. 配置答/判 LLM（OPENAI_API_KEY 等）
-3. 可用的 MemoryBackend.add/search
+3. 可用的 MemoBackend.add/search
 
-亦可将 adapters/ 接到 OmniMemEval / mem0 memory-benchmarks。
+亦可将 adapters/ 接到 OmniMemEval / mem0 memo-benchmarks。
 """
 
 from pathlib import Path
@@ -76,7 +76,7 @@ def run_one(
                 "skipped": True,
                 "reason": (
                     f"Dataset for {benchmark} not present under benches/data/{benchmark}/; "
-                    "download upstream then re-run. Compatible with OmniMemEval user-memory track."
+                    "download upstream then re-run. Compatible with OmniMemEval user-memo track."
                 ),
             }
         )
@@ -106,7 +106,7 @@ def run_track_b(
             "End-to-end quality depends on extraction + judge models. "
             "Do not compare raw scores to managed mem0/MemOS without matching model stack. "
             "See https://github.com/MemTensor/OmniMemEval and "
-            "https://github.com/mem0ai/memory-benchmarks"
+            "https://github.com/mem0ai/memo-benchmarks"
         ),
     }
     write_report(out_dir, "track_b", payload)

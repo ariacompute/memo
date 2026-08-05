@@ -1,17 +1,17 @@
 [package]
-name = "aria-memory"
+name = "aria-memo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [[bin]]
-name = "aria-memory"
+name = "aria-memo"
 path = "src/main.rs"
 
 [dependencies]
-memory.workspace = true
-memory-core.workspace = true
-memory-embed.workspace = true
-memory-storage.workspace = true
+memo.workspace = true
+memo-core.workspace = true
+memo-embed.workspace = true
+memo-storage.workspace = true
 clap.workspace = true
 serde_json.workspace = true

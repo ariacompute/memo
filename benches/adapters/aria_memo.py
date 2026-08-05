@@ -8,26 +8,26 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from .base import BackendInfo, MemoryBackend, SearchHit
+from .base import BackendInfo, MemoBackend, SearchHit
 
 
 def _find_bin() -> str | None:
-    env = os.environ.get("ARIA_MEMORY_BIN")
+    env = os.environ.get("ARIA_MEMO_BIN")
     if env and Path(env).is_file():
         return env
     root = Path(__file__).resolve().parents[2]
     for cand in (
-        root / "target" / "release" / "aria-memory",
-        root / "target" / "debug" / "aria-memory",
+        root / "target" / "release" / "aria-memo",
+        root / "target" / "debug" / "aria-memo",
     ):
         if cand.is_file():
             return str(cand)
-    which = shutil.which("aria-memory")
+    which = shutil.which("aria-memo")
     return which
 
 
-class AriaMemoryBackend(MemoryBackend):
-    """通过 CLI 驱动 aria-memory（本地 SQLite，零网络）。"""
+class AriaMemoBackend(MemoBackend):
+    """通过 CLI 驱动 aria-memo（本地 SQLite，零网络）。"""
 
     def __init__(self, bin_path: str | None = None) -> None:
         self._bin = bin_path or _find_bin()
@@ -39,7 +39,7 @@ class AriaMemoryBackend(MemoryBackend):
             return BackendInfo(
                 name="aria",
                 available=False,
-                reason="aria-memory binary not found; build with `cargo build -p aria-memory --release`",
+                reason="aria-memo binary not found; build with `cargo build -p aria-memo --release`",
                 includes_network=False,
                 offline=True,
             )
@@ -53,17 +53,17 @@ class AriaMemoryBackend(MemoryBackend):
     def reset(self) -> None:
         self.close()
         self._tmpdir = tempfile.TemporaryDirectory(prefix="aria-bench-")
-        self._db = str(Path(self._tmpdir.name) / "memory.db")
+        self._db = str(Path(self._tmpdir.name) / "memo.db")
 
     def _ensure(self) -> None:
         if self._db is None:
             self.reset()
         if not self._bin:
-            raise RuntimeError("aria-memory binary missing")
+            raise RuntimeError("aria-memo binary missing")
 
     def _run(self, *args: str) -> str:
         self._ensure()
-        cmd = [self._bin, "--db", self._db or "memory.db", *args]
+        cmd = [self._bin, "--db", self._db or "memo.db", *args]
         proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "cli failed")

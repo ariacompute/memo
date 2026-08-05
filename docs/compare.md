@@ -1,4 +1,4 @@
-# 功能对比矩阵 — aria-memory vs 业界长期记忆系统
+# 功能对比矩阵 — aria-memo vs 业界长期记忆系统
 
 > 对比对象：mem0 / MemOS / MemPalace / Zep / Letta。  
 > 图例：`✅` 具备 · `⚠️` 部分/需外部依赖 · `❌` 不具备或非设计目标。  
@@ -6,7 +6,7 @@
 
 ## 总表
 
-| 维度 | aria-memory | mem0 | MemOS | MemPalace | Zep | Letta |
+| 维度 | aria-memo | mem0 | MemOS | MemPalace | Zep | Letta |
 |------|:-----------:|:----:|:-----:|:---------:|:---:|:-----:|
 | 三层/分层记忆 | ✅ Working/ST/LT | ⚠️ 会话+长期语义 | ✅ MemCube/调度分层 | ✅ Wings→Rooms 空间分层 | ⚠️ 时序图/会话 | ⚠️ Agent 状态+归档 |
 | Episodic / Semantic / Entity / Graph 类型 | ✅ 模型齐全（graph 存型为主） | ✅ 抽取分类 | ✅ 图结构化记忆 | ⚠️ 空间隐喻组织 | ✅ 知识图谱时序 | ⚠️ 工具/核心记忆 |
@@ -27,7 +27,7 @@
 
 | 系统 | 一句话定位 |
 |------|------------|
-| **aria-memory** | 端侧 local-first **存储+检索**层；不内置 LLM 抽取与 Judge。 |
+| **aria-memo** | 端侧 local-first **存储+检索**层；不内置 LLM 抽取与 Judge。 |
 | **mem0** | 生产级 Agent 记忆；单遍分层抽取 + 多信号检索；LoCoMo/LongMemEval/BEAM 强。 |
 | **MemOS** | 记忆操作系统；MemCube、调度、多模态与 OmniMemEval 对比。 |
 | **MemPalace** | 空间隐喻组织 + 可无写时 LLM；LongMemEval Recall 突出、零写时成本。 |

@@ -1,7 +1,7 @@
-use memory_core::*;
+use memo_core::*;
 
 /// 重要性按半衰期指数衰减（参考 MemOS 生命周期管理）。
-pub fn decay_importance(m: &mut Memory, elapsed_sec: i64, half_life_sec: i64) {
+pub fn decay_importance(m: &mut Memo, elapsed_sec: i64, half_life_sec: i64) {
     if half_life_sec <= 0 || elapsed_sec <= 0 {
         return;
     }
@@ -11,9 +11,9 @@ pub fn decay_importance(m: &mut Memory, elapsed_sec: i64, half_life_sec: i64) {
 }
 
 /// 删除重要性低于阈值的记忆，返回删除条数。
-pub fn prune(store: &dyn MemoryStore, floor: f32) -> Result<usize> {
+pub fn prune(store: &dyn MemoStore, floor: f32) -> Result<usize> {
     if !(0.0..=1.0).contains(&floor) {
-        return Err(MemoryError::InvalidParam("floor out of [0,1]".into()));
+        return Err(MemoError::InvalidParam("floor out of [0,1]".into()));
     }
     let all = store.list(None)?;
     let mut n = 0;
@@ -28,13 +28,13 @@ pub fn prune(store: &dyn MemoryStore, floor: f32) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memory_storage::SqliteStore;
+    use memo_storage::SqliteStore;
     use std::collections::HashMap;
 
-    fn sample(id: &str, importance: f32) -> Memory {
-        Memory {
+    fn sample(id: &str, importance: f32) -> Memo {
+        Memo {
             id: id.into(),
-            memory_type: MemoryType::LongTerm {
+            memo_type: MemoType::LongTerm {
                 kind: LongTermKind::Episodic,
             },
             content: "x".into(),

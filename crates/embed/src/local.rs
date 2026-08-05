@@ -1,4 +1,4 @@
-use memory_core::{Embedder, MemoryError, Result};
+use memo_core::{Embedder, MemoError, Result};
 use std::collections::HashMap;
 
 /// 本地轻量嵌入器：将文本映射为定长向量。
@@ -18,7 +18,7 @@ impl LocalEmbedder {
     fn vectorize(&self, text: &str) -> Result<Vec<f32>> {
         let toks = tokenize(text);
         if toks.is_empty() {
-            return Err(MemoryError::EmptyEmbedding);
+            return Err(MemoError::EmptyEmbedding);
         }
         let mut vec = vec![0.0f32; self.dim];
         let mut counts: HashMap<usize, f32> = HashMap::new();
@@ -33,7 +33,7 @@ impl LocalEmbedder {
         }
         let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
         if norm == 0.0 {
-            return Err(MemoryError::EmptyEmbedding);
+            return Err(MemoError::EmptyEmbedding);
         }
         for v in vec.iter_mut() {
             *v /= norm;
@@ -119,7 +119,7 @@ mod tests {
     #[test]
     fn empty_text_is_error() {
         let e = LocalEmbedder::new(64);
-        assert!(matches!(e.embed("   "), Err(MemoryError::EmptyEmbedding)));
-        assert!(matches!(e.embed("!!! ???"), Err(MemoryError::EmptyEmbedding)));
+        assert!(matches!(e.embed("   "), Err(MemoError::EmptyEmbedding)));
+        assert!(matches!(e.embed("!!! ???"), Err(MemoError::EmptyEmbedding)));
     }
 }

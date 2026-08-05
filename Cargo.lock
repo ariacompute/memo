@@ -65,14 +65,14 @@ dependencies = [
 ]
 
 [[package]]
-name = "aria-memory"
+name = "aria-memo"
 version = "0.1.0"
 dependencies = [
  "clap",
- "memory",
- "memory-core",
- "memory-embed",
- "memory-storage",
+ "memo",
+ "memo-core",
+ "memo-embed",
+ "memo-storage",
  "serde_json",
 ]
 
@@ -216,17 +216,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
-name = "memory"
+name = "memo"
 version = "0.1.0"
 dependencies = [
- "memory-core",
- "memory-embed",
- "memory-storage",
+ "memo-core",
+ "memo-embed",
+ "memo-storage",
  "serde",
 ]
 
 [[package]]
-name = "memory-core"
+name = "memo-core"
 version = "0.1.0"
 dependencies = [
  "serde",
@@ -234,18 +234,18 @@ dependencies = [
 ]
 
 [[package]]
-name = "memory-embed"
+name = "memo-embed"
 version = "0.1.0"
 dependencies = [
- "memory-core",
+ "memo-core",
  "serde",
 ]
 
 [[package]]
-name = "memory-storage"
+name = "memo-storage"
 version = "0.1.0"
 dependencies = [
- "memory-core",
+ "memo-core",
  "rusqlite",
  "serde",
  "serde_json",

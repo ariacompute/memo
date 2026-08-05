@@ -1,4 +1,4 @@
-# requirements.md — memory 端侧长期记忆存储（M1 + M2 评测）
+# requirements.md — memo 端侧长期记忆存储（M1 + M2 评测）
 
 > 功能边界 / API / 表结构 / 异常 / 验收标准 / 业界评测。须经人工逐项审核后，方可据其生成 task.md 实施。
 
@@ -12,7 +12,7 @@
 - 检索：语义（向量余弦）+ 关键词（LIKE）混合打分，支持 top-k 与阈值。
 - 记忆管理：`consolidate`（巩固：提升重要性/合并）、`dedup`（去重：相似度阈值合并）。
 - 生命周期：分层老化、重要性衰减、遗忘（默认硬删除，预留软删除标记）。
-- 统一错误 `MemoryError`；可选 CLI（add/get/search/list/forget）。
+- 统一错误 `MemoError`；可选 CLI（add/get/search/list/forget）。
 - 全部新增功能同步单测，核心逻辑覆盖正常 + 异常路径。
 
 ### 1.2 范围外（M1，列为后续里程碑）
@@ -25,16 +25,16 @@
 
 ## 2. API
 
-### 2.1 数据模型（memory-core）
+### 2.1 数据模型（memo-core）
 ```rust
-pub type MemoryId = String;
+pub type MemoId = String;
 
-pub enum MemoryType { Working, ShortTerm, LongTerm { kind: LongTermKind } }
+pub enum MemoType { Working, ShortTerm, LongTerm { kind: LongTermKind } }
 pub enum LongTermKind { Episodic, Semantic, Entity, Graph }
 
-pub struct Memory {
-    pub id: MemoryId,
-    pub memory_type: MemoryType,
+pub struct Memo {
+    pub id: MemoId,
+    pub memo_type: MemoType,
     pub content: String,
     pub embedding: Option<Vec<f32>>,
     pub metadata: std::collections::HashMap<String, String>,
@@ -50,33 +50,33 @@ pub struct SearchQuery {
     pub semantic_weight: f32,   // [0,1]，与 keyword_weight 可不全为 0，和不必为 1
     pub keyword_weight: f32,    // [0,1]
     pub score_threshold: f32,
-    pub memory_type: Option<MemoryType>,
+    pub memo_type: Option<MemoType>,
 }
 
-pub struct ScoredMemory { pub memory: Memory, pub score: f32 }
+pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
 ```
 
-### 2.2 trait（memory-core）
-- `MemoryStore`：`add` / `get` / `update` / `forget` / `search`。
-- `Embedder`：`fn embed(&self, text: &str) -> Result<Vec<f32>, MemoryError>`。
+### 2.2 trait（memo-core）
+- `MemoStore`：`add` / `get` / `update` / `forget` / `search`。
+- `Embedder`：`fn embed(&self, text: &str) -> Result<Vec<f32>, MemoError>`。
 - `StorageBackend`：`open` / `migrate` / 原始 CRUD（抽象，供复制后端扩展）。
 
-### 2.3 MemoryManager 公共 API（memory crate）
-- `new(embedder: Arc<dyn Embedder>, store: Arc<dyn MemoryStore>) -> Self`
-- `add(content, memory_type, metadata, importance) -> Result<MemoryId>`（自动 embed + 持久化；生成 id、version、时间戳）
-- `get(id) -> Result<Option<Memory>>`
-- `update(id, patch: MemoryPatch) -> Result<()>`（content 变更时重算 embedding、version+1）
+### 2.3 MemoManager 公共 API（memo crate）
+- `new(embedder: Arc<dyn Embedder>, store: Arc<dyn MemoStore>) -> Self`
+- `add(content, memo_type, metadata, importance) -> Result<MemoId>`（自动 embed + 持久化；生成 id、version、时间戳）
+- `get(id) -> Result<Option<Memo>>`
+- `update(id, patch: MemoPatch) -> Result<()>`（content 变更时重算 embedding、version+1）
 - `forget(id) -> Result<bool>`（返回是否删除成功；默认硬删除）
-- `search(query) -> Result<Vec<ScoredMemory>>`（语义+关键词混合，过滤 deleted）
+- `search(query) -> Result<Vec<ScoredMemo>>`（语义+关键词混合，过滤 deleted）
 - `consolidate(id, delta_importance)` / `dedup(threshold)` -> 见 §1.1
 
-### 2.4 CLI（aria-memory，二进制名 `aria-memory` / 命令显示名 `memory`）
-- `memory add --type working --content "..." --importance 0.8`
-- `memory get --id <id>`
-- `memory search --text "..." --top-k 5`
-- `memory list [--type ...]`
-- `memory forget --id <id>`
-- `memory bench --size N --top-k K --warmup W --json`（M2：进程内微基准 JSON）
+### 2.4 CLI（aria-memo，二进制名 `aria-memo` / 命令显示名 `memo`）
+- `memo add --type working --content "..." --importance 0.8`
+- `memo get --id <id>`
+- `memo search --text "..." --top-k 5`
+- `memo list [--type ...]`
+- `memo forget --id <id>`
+- `memo bench --size N --top-k K --warmup W --json`（M2：进程内微基准 JSON）
 
 ## 3. 表结构（SQLite）
 
@@ -84,7 +84,7 @@ pub struct ScoredMemory { pub memory: Memory, pub score: f32 }
 | 列 | 类型 | 约束 |
 |----|------|------|
 | id | TEXT | PRIMARY KEY |
-| memory_type | TEXT | NOT NULL（如 `working` / `short_term` / `long_term:episodic`） |
+| memo_type | TEXT | NOT NULL（如 `working` / `short_term` / `long_term:episodic`） |
 | content | TEXT | NOT NULL |
 | embedding | BLOB | 长度前缀序列化的 f32 向量（可为空） |
 | metadata | TEXT | JSON 字符串 |
@@ -96,12 +96,12 @@ pub struct ScoredMemory { pub memory: Memory, pub score: f32 }
 
 索引：`idx_memories_type`、`idx_memories_updated_at`、`idx_memories_deleted`。
 
-## 4. 异常（MemoryError，thiserror）
+## 4. 异常（MemoError，thiserror）
 
 - `Io(#[from] std::io::Error)`：IO 失败。
 - `Db(String)`：SQLite 操作失败。
-- `NotFound(MemoryId)`：`get`/`update`/`forget` 目标不存在。
-- `DuplicateId(MemoryId)`：`add` 重复 id。
+- `NotFound(MemoId)`：`get`/`update`/`forget` 目标不存在。
+- `DuplicateId(MemoId)`：`add` 重复 id。
 - `EmptyContent`：内容为空。
 - `EmptyEmbedding`：嵌入为空/零长。
 - `InvalidParam(String)`：参数非法（importance 越界、top_k=0、query 文本空）。
@@ -115,7 +115,7 @@ pub struct ScoredMemory { pub memory: Memory, pub score: f32 }
 
 - `cargo test` 全绿（正常 + 异常用例）。
 - `cargo clippy --all-targets` 无告警。
-- 交叉编译：`cargo build --target aarch64-linux-android` 通过（或 `wasm32-unknown-unknown -p memory-core -p memory-embed`）。
+- 交叉编译：`cargo build --target aarch64-linux-android` 通过（或 `wasm32-unknown-unknown -p memo-core -p memo-embed`）。
 - 黄金路径单测：`add → search → get` 端到端跑通。
 - 异常单测：重复 id、缺失、空内容、空嵌入、非法参数、损坏 DB 打开失败。
 - 覆盖率：核心逻辑（manager / search / consolidate / dedup / lifecycle）均有正常 + 异常用例。
@@ -132,7 +132,7 @@ pub struct ScoredMemory { pub memory: Memory, pub score: f32 }
 | **A** | 存储/检索层 | add/search 延迟与吞吐、包体/RSS、离线能力、合成集 Recall@k / MRR | aria 可零网络；他系统按 adapter 可用性跳过或标 N/A |
 | **B** | 端到端记忆质量 | LoCoMo / LongMemEval / BEAM（及 OmniMemEval 兼容入口） | 需外部 LLM（答/判）与可选云 API；结果须标注模型与费用属性 |
 
-定位声明：aria-memory 是 local-first 存储/检索层；B 层分数与依赖 LLM 抽取的托管产品**不可直接宣称同质碾压**，报告须分列「离线检索」与「LLM 管线」条件。
+定位声明：aria-memo 是 local-first 存储/检索层；B 层分数与依赖 LLM 抽取的托管产品**不可直接宣称同质碾压**，报告须分列「离线检索」与「LLM 管线」条件。
 
 ### 6.2 功能对比矩阵
 
@@ -159,7 +159,7 @@ pub struct ScoredMemory { pub memory: Memory, pub score: f32 }
 - 基准：LoCoMo、LongMemEval、BEAM（1M/10M 按资源可选）。
 - 管线：ingest → retrieve → answer（外部 LLM）→ judge（外部 LLM）→ 聚合。
 - Adapter 契约：统一 `add` / `search`（及可选 `reset`）；实现位于 `benches/adapters/`。
-- 兼容：预留 OmniMemEval / mem0 `memory-benchmarks` 风格入口说明（`benches/README.md`）。
+- 兼容：预留 OmniMemEval / mem0 `memo-benchmarks` 风格入口说明（`benches/README.md`）。
 - 产物：JSON + Markdown 报告；须记录模型名、日期、token/费用（若可得）、是否离线。
 
 ### 6.5 工程布局（`benches/`）
@@ -179,7 +179,7 @@ benches/
 
 ### 6.6 CLI 增补（供 Track A）
 
-- `memory bench --ops add,search --size N --top-k K --warmup W --json`：进程内跑测，stdout 打印 JSON 指标。
+- `memo bench --ops add,search --size N --top-k K --warmup W --json`：进程内跑测，stdout 打印 JSON 指标。
 - 不引入 criterion / `crates/bench`。
 
 ### 6.7 M2 验收标准

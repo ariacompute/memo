@@ -3,8 +3,8 @@
 ## 如何复现
 
 ```bash
-cargo build -p aria-memory --release
-export ARIA_MEMORY_BIN="$(pwd)/target/release/aria-memory"
+cargo build -p aria-memo --release
+export ARIA_MEMORY_BIN="$(pwd)/target/release/aria-memo"
 pip install -r benches/requirements.txt
 
 python benches/run.py --track a --size 1000 --systems aria
@@ -31,4 +31,4 @@ python benches/run.py --track b --benchmarks locomo,longmemeval,beam --systems a
 
 1. **A 层**才是 aria 与托管产品同口径主战场（延迟、离线、包体）。
 2. **B 层**依赖抽取与 Judge 模型；`--dry-run` 只验证管线骨架。
-3. aria 微基准走 `memory bench --json`（进程内），不含进程启动摊销。
+3. aria 微基准走 `memo bench --json`（进程内），不含进程启动摊销。

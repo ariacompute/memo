@@ -1,5 +1,5 @@
 [package]
-name = "memory-core"
+name = "memo-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

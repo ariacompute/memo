@@ -24,7 +24,7 @@ class BackendInfo:
     offline: bool = True
 
 
-class MemoryBackend(ABC):
+class MemoBackend(ABC):
     """最小契约：add / search / reset。"""
 
     @abstractmethod

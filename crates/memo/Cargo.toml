@@ -1,11 +1,11 @@
 [package]
-name = "memory"
+name = "memo"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-memory-core.workspace = true
-memory-storage.workspace = true
-memory-embed.workspace = true
+memo-core.workspace = true
+memo-storage.workspace = true
+memo-embed.workspace = true
 serde.workspace = true

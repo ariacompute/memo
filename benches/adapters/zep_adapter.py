@@ -3,10 +3,10 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .base import BackendInfo, MemoryBackend, SearchHit
+from .base import BackendInfo, MemoBackend, SearchHit
 
 
-class ZepBackend(MemoryBackend):
+class ZepBackend(MemoBackend):
     def __init__(self) -> None:
         self._client: Any = None
         self._reason = ""

@@ -1,21 +1,21 @@
 use thiserror::Error;
 
 /// 统一结果类型。
-pub type Result<T> = std::result::Result<T, MemoryError>;
+pub type Result<T> = std::result::Result<T, MemoError>;
 
 /// 记忆存储统一错误。任何失败都必须显式返回，禁止静默吞错。
 #[derive(Debug, Error)]
-pub enum MemoryError {
+pub enum MemoError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
     #[error("database error: {0}")]
     Db(String),
 
-    #[error("memory not found: {0}")]
+    #[error("memo not found: {0}")]
     NotFound(String),
 
-    #[error("duplicate memory id: {0}")]
+    #[error("duplicate memo id: {0}")]
     DuplicateId(String),
 
     #[error("empty content")]
@@ -37,19 +37,19 @@ pub enum MemoryError {
     Other(String),
 }
 
-impl Clone for MemoryError {
+impl Clone for MemoError {
     fn clone(&self) -> Self {
         match self {
-            MemoryError::Io(e) => MemoryError::Io(std::io::Error::new(e.kind(), e.to_string())),
-            MemoryError::Db(s) => MemoryError::Db(s.clone()),
-            MemoryError::NotFound(s) => MemoryError::NotFound(s.clone()),
-            MemoryError::DuplicateId(s) => MemoryError::DuplicateId(s.clone()),
-            MemoryError::EmptyContent => MemoryError::EmptyContent,
-            MemoryError::EmptyEmbedding => MemoryError::EmptyEmbedding,
-            MemoryError::InvalidParam(s) => MemoryError::InvalidParam(s.clone()),
-            MemoryError::Serialization(s) => MemoryError::Serialization(s.clone()),
-            MemoryError::Embedding(s) => MemoryError::Embedding(s.clone()),
-            MemoryError::Other(s) => MemoryError::Other(s.clone()),
+            MemoError::Io(e) => MemoError::Io(std::io::Error::new(e.kind(), e.to_string())),
+            MemoError::Db(s) => MemoError::Db(s.clone()),
+            MemoError::NotFound(s) => MemoError::NotFound(s.clone()),
+            MemoError::DuplicateId(s) => MemoError::DuplicateId(s.clone()),
+            MemoError::EmptyContent => MemoError::EmptyContent,
+            MemoError::EmptyEmbedding => MemoError::EmptyEmbedding,
+            MemoError::InvalidParam(s) => MemoError::InvalidParam(s.clone()),
+            MemoError::Serialization(s) => MemoError::Serialization(s.clone()),
+            MemoError::Embedding(s) => MemoError::Embedding(s.clone()),
+            MemoError::Other(s) => MemoError::Other(s.clone()),
         }
     }
 }
@@ -60,32 +60,32 @@ mod tests {
 
     #[test]
     fn display_messages() {
-        assert_eq!(MemoryError::EmptyContent.to_string(), "empty content");
+        assert_eq!(MemoError::EmptyContent.to_string(), "empty content");
         assert_eq!(
-            MemoryError::NotFound("x1".into()).to_string(),
-            "memory not found: x1"
+            MemoError::NotFound("x1".into()).to_string(),
+            "memo not found: x1"
         );
         assert_eq!(
-            MemoryError::DuplicateId("x2".into()).to_string(),
-            "duplicate memory id: x2"
+            MemoError::DuplicateId("x2".into()).to_string(),
+            "duplicate memo id: x2"
         );
-        assert!(MemoryError::Db("boom".into())
+        assert!(MemoError::Db("boom".into())
             .to_string()
             .contains("boom"));
     }
 
     #[test]
     fn io_from_conversion() {
-        let e: MemoryError = std::io::Error::other("disk").into();
+        let e: MemoError = std::io::Error::other("disk").into();
         match e {
-            MemoryError::Io(_) => {}
+            MemoError::Io(_) => {}
             other => panic!("expected Io, got {other:?}"),
         }
     }
 
     #[test]
     fn invalid_param_carries_reason() {
-        let e = MemoryError::InvalidParam("top_k=0".into());
+        let e = MemoError::InvalidParam("top_k=0".into());
         assert!(e.to_string().contains("top_k=0"));
     }
 }

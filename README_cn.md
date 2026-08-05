@@ -1,4 +1,4 @@
-# aria memory
+# aria memo
 
 [English](README.md) | [中文](README_cn.md)
 
@@ -11,7 +11,7 @@ Rust 实现的边缘/移动端本地优先（local-first）长期记忆存储，
 分层 cargo workspace（trait 解耦）：
 
 ```
-cli(aria-memory) → memory(编排) → storage(SQLite) / embed(本地嵌入) → core(模型/错误/trait)
+cli(aria-memo) → memo(编排) → storage(SQLite) / embed(本地嵌入) → core(模型/错误/trait)
 ```
 
 ## 快速开始
@@ -19,8 +19,8 @@ cli(aria-memory) → memory(编排) → storage(SQLite) / embed(本地嵌入) �
 ```bash
 cargo build
 cargo test
-cargo run -p aria-memory -- add --type working --content "用户喜欢 Rust" --importance 0.8
-cargo run -p aria-memory -- search --text "Rust" --top-k 5
+cargo run -p aria-memo -- add --type working --content "用户喜欢 Rust" --importance 0.8
+cargo run -p aria-memo -- search --text "Rust" --top-k 5
 ```
 
 ## 对比评测
@@ -32,7 +32,7 @@ cargo run -p aria-memory -- search --text "Rust" --top-k 5
 - Python 编排（Track A 存储/检索 + Track B 端到端质量）：[benches/README.md](./benches/README.md)
 
 ```bash
-cargo run -p aria-memory -- bench --size 1000 --json
+cargo run -p aria-memo -- bench --size 1000 --json
 pip install -r benches/requirements.txt
 python benches/run.py --track a --size 1000
 python benches/run.py --track b --dry-run
@@ -40,10 +40,10 @@ python benches/run.py --track b --dry-run
 
 ## 目录
 
-- `crates/core` — 数据模型、统一错误 `MemoryError`、trait
+- `crates/core` — 数据模型、统一错误 `MemoError`、trait
 - `crates/embed` — 本地轻量 embedder（ngram + 哈希/TF-IDF 向量）+ 余弦相似度
 - `crates/storage` — rusqlite 嵌入式持久化后端
-- `crates/memory` — 记忆管理编排与生命周期
+- `crates/memo` — 记忆管理编排与生命周期
 - `crates/cli` — 命令行入口
 - `benches/` — 业界对比评测
 - `docs/` — 功能矩阵与评测结果说明

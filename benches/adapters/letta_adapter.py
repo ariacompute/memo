@@ -2,10 +2,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from .base import BackendInfo, MemoryBackend, SearchHit
+from .base import BackendInfo, MemoBackend, SearchHit
 
 
-class LettaBackend(MemoryBackend):
+class LettaBackend(MemoBackend):
     def __init__(self) -> None:
         self._client: Any = None
         self._reason = ""
@@ -31,7 +31,7 @@ class LettaBackend(MemoryBackend):
 
     def add(self, content: str, metadata: dict[str, Any] | None = None) -> str:
         _ = content, metadata
-        raise RuntimeError("Letta is an agent runtime; map archival memory API before enabling")
+        raise RuntimeError("Letta is an agent runtime; map archival memo API before enabling")
 
     def search(self, query: str, top_k: int = 5) -> list[SearchHit]:
         _ = query, top_k

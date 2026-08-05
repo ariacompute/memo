@@ -1,4 +1,4 @@
-use memory_core::{MemoryError, Result, StorageBackend};
+use memo_core::{MemoError, Result, StorageBackend};
 
 /// 后端种类标识。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +27,7 @@ impl ReplicatedBackend {
 
     /// M1 未实现：调用即返回 `Other` 错误。
     pub fn open(_location: &str) -> Result<()> {
-        Err(MemoryError::Other(
+        Err(MemoError::Other(
             "replicated backend not implemented in M1".into(),
         ))
     }
@@ -41,7 +41,7 @@ impl Default for ReplicatedBackend {
 
 impl StorageBackend for ReplicatedBackend {
     fn migrate(&self) -> Result<()> {
-        Err(MemoryError::Other(
+        Err(MemoError::Other(
             "replicated backend not implemented in M1".into(),
         ))
     }

@@ -1,4 +1,4 @@
-# aria memory
+# aria memo
 
 [English](README.md) | [中文](README_cn.md)
 
@@ -6,14 +6,14 @@ Local-first long-term memory store for LLM Agents, built in Rust for edge/mobile
 Provides CRUD, semantic + keyword hybrid retrieval, consolidation, deduplication, and forgetting —
 with zero network dependency and zero heavy ML frameworks.
 
-Inspired by: rqlite / turso (embedded persistence), MemOS / mem0 / MemPalace (memory management).
+Inspired by: rqlite / turso (embedded persistence), MemOS / mem0 / MemPalace (memo management).
 
 ## Architecture
 
 Layered cargo workspace (trait-decoupled):
 
 ```
-cli(aria-memory) → memory(orchestration) → storage(SQLite) / embed(local embedding) → core(models/errors/traits)
+cli(aria-memo) → memo(orchestration) → storage(SQLite) / embed(local embedding) → core(models/errors/traits)
 ```
 
 ## Quick Start
@@ -21,8 +21,8 @@ cli(aria-memory) → memory(orchestration) → storage(SQLite) / embed(local emb
 ```bash
 cargo build
 cargo test
-cargo run -p aria-memory -- add --type working --content "User likes Rust" --importance 0.8
-cargo run -p aria-memory -- search --text "Rust" --top-k 5
+cargo run -p aria-memo -- add --type working --content "User likes Rust" --importance 0.8
+cargo run -p aria-memo -- search --text "Rust" --top-k 5
 ```
 
 ## Benchmarks & Comparison
@@ -34,7 +34,7 @@ Compare against: mem0 / MemOS / MemPalace / Zep / Letta.
 - Python harness (Track A storage/retrieval + Track B end-to-end quality): [benches/README.md](./benches/README.md)
 
 ```bash
-cargo run -p aria-memory -- bench --size 1000 --json
+cargo run -p aria-memo -- bench --size 1000 --json
 pip install -r benches/requirements.txt
 python benches/run.py --track a --size 1000
 python benches/run.py --track b --dry-run
@@ -42,10 +42,10 @@ python benches/run.py --track b --dry-run
 
 ## Directory
 
-- `crates/core` — data models, unified `MemoryError`, traits
+- `crates/core` — data models, unified `MemoError`, traits
 - `crates/embed` — lightweight local embedder (ngram + hash/TF-IDF vectors) + cosine similarity
 - `crates/storage` — rusqlite bundled embedded persistence backend
-- `crates/memory` — memory management orchestration & lifecycle
+- `crates/memo` — memory management orchestration & lifecycle
 - `crates/cli` — command-line entry point
 - `benches/` — industry comparison harness
 - `docs/` — feature matrix and benchmark notes

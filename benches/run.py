@@ -21,7 +21,7 @@ def parse_csv(raw: str) -> list[str]:
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(description="aria-memory industry benches (Track A + B)")
+    p = argparse.ArgumentParser(description="aria-memo industry benches (Track A + B)")
     p.add_argument("--track", choices=("a", "b", "all"), default="a")
     p.add_argument("--systems", default="aria", help=f"comma list; full set: {DEFAULT_SYSTEMS}")
     p.add_argument("--size", type=int, default=1000, help="Track A corpus size for microbench")
