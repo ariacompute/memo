@@ -21,6 +21,11 @@ from judge import Judge
 
 BENCHMARKS = ("locomo_refined", "halumem", "longmemeval", "personamem")
 
+# Default cap on the number of samples evaluated per benchmark when `--limit` is
+# omitted. Real datasets (e.g. HaluMem-Medium) can require tens of thousands of
+# `add` calls; without a cap an unbounded run is effectively unresponsive.
+DEFAULT_BENCH_LIMIT = 50
+
 _REGISTRY = {
     "locomo_refined": "track_b.locomo_refined",
     "halumem": "track_b.halumem",
@@ -49,6 +54,10 @@ def run_track_b(
     datasets_source: dict[str, str] = {}
     bench_scores: list[dict[str, Any]] = []
 
+    effective_limit = limit if limit is not None else DEFAULT_BENCH_LIMIT
+    if limit is None:
+        print(f"[track_b] no --limit given; applying default cap of {DEFAULT_BENCH_LIMIT} samples/benchmark")
+
     for bench in selected:
         if bench not in BENCHMARKS:
             raise ValueError(f"unknown benchmark: {bench}; valid={BENCHMARKS}")
@@ -56,7 +65,7 @@ def run_track_b(
         resolved = resolve_dataset(bench)
         datasets_source[bench] = resolved.source
         print(f"[track_b] {bench}: dataset={resolved.path} (source={resolved.source})")
-        dataset = mod.load(resolved.path, limit=limit)
+        dataset = mod.load(resolved.path, limit=effective_limit)
         scores = mod.run(backend, dataset, judge, top_k, do_ingest=do_ingest)
         bench_scores.append(
             {

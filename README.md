@@ -97,6 +97,16 @@ python benches/run.py --track b --judge-model gpt-4o-mini
 
 > Each benchmark falls back to the bundled `benches/data/fixtures/` (synthetic, offline smoke) when real data is absent; `dataset_source` is recorded in the report. Use `--benchmarks`, `--limit`, or `--ingest-only` to scope a run.
 
+**Scoping large real datasets.** Real datasets can be huge — e.g. `halumem` (HaluMem-Medium) holds ~75k `add` calls. `--limit N` bounds how many samples are *ingested and evaluated* per benchmark (for `halumem` each record is one sample set; for `locomo_refined`/`longmemeval`/`personamem` it caps questions/items). When `--limit` is omitted, a default cap of `50` samples/benchmark is applied (printed to stderr) so an unbounded run does not hang. Ingestion prints progress to stderr (`[bench] ingest 500/N ... ingest done`).
+
+```bash
+# bounded, fast smoke run
+python benches/run.py --track b --limit 2
+# full-scale (long but bounded); build a release binary to speed up each add
+cargo build -p aria-memo --release
+python benches/run.py --track b --benchmarks halumem
+```
+
 ## Directory
 
 - `crates/core` — data models, unified `MemoError`, traits

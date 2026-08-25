@@ -129,21 +129,29 @@ def load(path: Path, limit: int | None = None) -> Dataset:
     return Dataset(questions=qs, shared_contexts=shared, size=len(qs))
 
 
-def _ingest(backend: MemoBackend, ds: Dataset) -> None:
-    backend.reset()
-    skipped = 0
+def _valid_turns(ds: Dataset):
+    """Yield non-empty, alphanumeric-containing context turns, truncated at each
+    question's end_index to avoid leaking answer context into memory."""
     for q in ds.questions:
         ctx = ds.shared_contexts.get(q.shared_context_id, [])
-        # only write the context before the truncation point to avoid information leakage
         truncated = ctx[: q.end_index] if q.end_index else ctx
         for text in truncated:
             norm = text.strip()
-            if not norm or not any(ch.isalnum() for ch in norm):
-                skipped += 1
-                continue
-            backend.add(norm, {"memo_type": "working"})
-    if skipped:
-        print(f"[personamem] skipped {skipped} empty/symbol-only context turns", file=sys.stderr)
+            if norm and any(ch.isalnum() for ch in norm):
+                yield norm
+
+
+def _ingest(backend: MemoBackend, ds: Dataset) -> None:
+    backend.reset()
+    total = sum(1 for _ in _valid_turns(ds))
+    done = 0
+    for norm in _valid_turns(ds):
+        backend.add(norm, {"memo_type": "working"})
+        done += 1
+        if done % 500 == 0:
+            print(f"[personamem] ingest {done}/{total}", file=sys.stderr, flush=True)
+    if done:
+        print(f"[personamem] ingest done {done}/{total}", file=sys.stderr, flush=True)
 
 
 def run(

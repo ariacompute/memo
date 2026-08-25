@@ -81,6 +81,15 @@ def load(path: Path, limit: int | None = None) -> Dataset:
 def _ingest(backend: MemoBackend, ds: Dataset) -> None:
     backend.reset()
     skipped = 0
+    # precompute the turn count so progress can show done/total without a second pass
+    total = sum(
+        1
+        for turns in ds.conversations.values()
+        for turn in turns
+        if (turn.get("text") or turn.get("content") or "").strip()
+        and any(ch.isalnum() for ch in (turn.get("text") or turn.get("content") or "").strip())
+    )
+    done = 0
     for cid, turns in ds.conversations.items():
         for turn in turns:
             text = turn.get("text") or turn.get("content") or ""
@@ -90,6 +99,11 @@ def _ingest(backend: MemoBackend, ds: Dataset) -> None:
                 skipped += 1
                 continue
             backend.add(norm, {"memo_type": "working"})
+            done += 1
+            if done % 500 == 0:
+                print(f"[locomo] ingest {done}/{total}", file=sys.stderr, flush=True)
+    if done:
+        print(f"[locomo] ingest done {done}/{total}", file=sys.stderr, flush=True)
     if skipped:
         print(f"[locomo] skipped {skipped} empty/symbol-only turns", file=sys.stderr)
 

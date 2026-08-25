@@ -88,8 +88,8 @@ def load(path: Path, limit: int | None = None) -> Dataset:
                                 "SessionID": sid,
                             }
                         )
-                        if limit and len(questions) >= limit:
-                            break
+                # `--limit` bounds ingestion: each record is one evaluable sample set
+                # (its full session history must be ingested to answer its questions).
                 if limit and len(questions) >= limit:
                     break
         return Dataset(sessions=sessions, memories=memories, questions=questions, size=len(questions))
@@ -252,6 +252,12 @@ def run(
 ) -> list[Score]:
     if do_ingest:
         backend.reset()
+        import sys
+
+        total_ingest = sum(
+            1 for m in dataset.memories if not m.get("Distraction")
+        ) + sum(len(s.get("Conversation", [])) for s in dataset.sessions)
+        done = 0
         # ingest ground-truth memories as the knowledge base (synthetic / upstream convention)
         for m in dataset.memories:
             if m.get("Distraction"):
@@ -260,10 +266,17 @@ def run(
                 m["Content"],
                 {"memo_type": m.get("Type", "working"), "importance": float(m.get("Importance", 0.5))},
             )
+            done += 1
+            if done % 500 == 0:
+                print(f"[halumem] ingest {done}/{total_ingest}", file=sys.stderr, flush=True)
         # ingest conversation context
         for s in dataset.sessions:
             for turn in s.get("Conversation", []):
                 text = turn.get("text") or turn.get("content") or ""
                 if text:
                     backend.add(text, {"memo_type": "working"})
+                    done += 1
+                    if done % 500 == 0:
+                        print(f"[halumem] ingest {done}/{total_ingest}", file=sys.stderr, flush=True)
+        print(f"[halumem] ingest done {done}/{total_ingest}", file=sys.stderr, flush=True)
     return _run_extraction(backend, dataset, judge) + _run_updating(backend, dataset, judge) + _run_qa(backend, dataset, judge)

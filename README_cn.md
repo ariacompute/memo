@@ -95,6 +95,16 @@ python benches/run.py --track b --judge-model gpt-4o-mini
 
 > 各基准在缺少真实数据时会回退到仓库内置 `benches/data/fixtures/`（合成样本，离线冒烟），报告中以 `dataset_source` 标注。可用 `--benchmarks`、`--limit`、`--ingest-only` 限定评测范围。
 
+**限定大型真实数据集。** 真实数据集可能非常大——例如 `halumem`（HaluMem-Medium）约需 7.5 万次 `add` 调用。`--limit N` 限定每个基准**注入与评测**的样本数（对 `halumem` 每个记录为一个样本集；对 `locomo_refined`/`longmemeval`/`personamem` 则限制问题/条目数）。省略 `--limit` 时，默认对每个基准施加 `50` 样本上限（会打印到 stderr），避免无界运行卡死。注入过程会向 stderr 输出进度（`[bench] ingest 500/N ... ingest done`）。
+
+```bash
+# 有界的快速冒烟运行
+python benches/run.py --track b --limit 2
+# 全量运行（耗时但受上限约束）；构建 release 二进制可加速每次 add
+cargo build -p aria-memo --release
+python benches/run.py --track b --benchmarks halumem
+```
+
 ## 目录
 
 - `crates/core` — 数据模型、统一错误 `MemoError`、trait

@@ -47,9 +47,8 @@ def load(path: Path, limit: int | None = None) -> Dataset:
     return Dataset(items=items, size=len(items))
 
 
-def _ingest(backend: MemoBackend, ds: Dataset) -> None:
-    backend.reset()
-    skipped = 0
+def _valid_turns(ds: Dataset):
+    """Yield non-empty, alphanumeric-containing turn texts across all items/sessions."""
     for item in ds.items:
         for sess in item.get("haystack_sessions", []) or []:
             # real format: session is a list of [{role, content}, ...];
@@ -60,11 +59,21 @@ def _ingest(backend: MemoBackend, ds: Dataset) -> None:
                     continue
                 text = (turn.get("content") or turn.get("text") or "").strip()
                 if not text or not any(ch.isalnum() for ch in text):
-                    skipped += 1
                     continue
-                backend.add(text, {"memo_type": "working"})
-    if skipped:
-        print(f"[longmemeval] skipped {skipped} empty/symbol-only turns", file=sys.stderr)
+                yield text
+
+
+def _ingest(backend: MemoBackend, ds: Dataset) -> None:
+    backend.reset()
+    total = sum(1 for _ in _valid_turns(ds))
+    done = 0
+    for text in _valid_turns(ds):
+        backend.add(text, {"memo_type": "working"})
+        done += 1
+        if done % 500 == 0:
+            print(f"[longmemeval] ingest {done}/{total}", file=sys.stderr, flush=True)
+    if done:
+        print(f"[longmemeval] ingest done {done}/{total}", file=sys.stderr, flush=True)
 
 
 def _answer(backend: MemoBackend, question: str, top_k: int) -> str:
