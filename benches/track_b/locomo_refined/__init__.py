@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -32,6 +33,23 @@ class Dataset:
     size: int = 0
 
 
+def _conv_turns(obj: dict) -> list[dict]:
+    """Extract a flat turn list from either the real or synthetic conversation record.
+
+    Real LoCoMo-Refined (mem-eval-suite/LoCoMo_refined) layout:
+        {"sample_id":..., "sessions":[{"messages":[{"text",...}]}]}
+    Synthetic fixture layout:
+        {"conversation_id":..., "conversation":[{"speaker","text"}]}
+    """
+    if "sessions" in obj:
+        turns: list[dict] = []
+        for sess in obj.get("sessions", []):
+            for m in sess.get("messages", []):
+                turns.append(m)
+        return turns
+    return obj.get("conversation", [])
+
+
 def load(path: Path, limit: int | None = None) -> Dataset:
     conv_path = Path(path) / "conversations.jsonl"
     q_path = Path(path) / "questions.jsonl"
@@ -43,7 +61,10 @@ def load(path: Path, limit: int | None = None) -> Dataset:
                 if not line:
                     continue
                 obj = json.loads(line)
-                conversations[obj["conversation_id"]] = obj["conversation"]
+                cid = obj.get("conversation_id") or obj.get("sample_id")
+                if cid is None:
+                    continue
+                conversations[str(cid)] = _conv_turns(obj)
     questions: list[dict] = []
     if q_path.exists():
         with q_path.open(encoding="utf-8") as f:
@@ -59,11 +80,18 @@ def load(path: Path, limit: int | None = None) -> Dataset:
 
 def _ingest(backend: MemoBackend, ds: Dataset) -> None:
     backend.reset()
+    skipped = 0
     for cid, turns in ds.conversations.items():
         for turn in turns:
             text = turn.get("text") or turn.get("content") or ""
-            if text:
-                backend.add(text, {"memo_type": "working"})
+            norm = text.strip()
+            # 跳过纯空白或纯标点/符号（embedder 视为空 embedding）的对话轮。
+            if not norm or not any(ch.isalnum() for ch in norm):
+                skipped += 1
+                continue
+            backend.add(norm, {"memo_type": "working"})
+    if skipped:
+        print(f"[locomo] skipped {skipped} empty/symbol-only turns", file=sys.stderr)
 
 
 def _answer(backend: MemoBackend, question: str, top_k: int) -> str:

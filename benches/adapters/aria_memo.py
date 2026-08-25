@@ -73,18 +73,18 @@ class AriaMemoBackend(MemoBackend):
         meta = metadata or {}
         mtype = str(meta.get("memo_type") or meta.get("type") or "working")
         importance = str(meta.get("importance", 0.5))
+        # 用 `--content=...` 形式，避免内容以 '-' 开头被 clap 误判为选项。
         return self._run(
             "add",
             "--type",
             mtype,
-            "--content",
-            content,
+            f"--content={content}",
             "--importance",
             importance,
         )
 
     def search(self, query: str, top_k: int = 5) -> list[SearchHit]:
-        out = self._run("search", "--text", query, "--top-k", str(top_k))
+        out = self._run("search", f"--text={query}", "--top-k", str(top_k))
         hits: list[SearchHit] = []
         if not out:
             return hits
@@ -127,7 +127,7 @@ class AriaMemoBackend(MemoBackend):
     def update(self, memo_id: str, content: str | None = None, importance: float | None = None) -> None:
         args: list[str] = ["update", "--id", memo_id]
         if content is not None:
-            args += ["--content", content]
+            args += [f"--content={content}"]
         if importance is not None:
             args += ["--importance", str(importance)]
         self._run(*args)

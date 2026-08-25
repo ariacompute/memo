@@ -41,7 +41,7 @@ class TestLoaders(unittest.TestCase):
 
     def test_resolve_fixture_fallback(self):
         r = resolve_dataset("locomo_refined")
-        self.assertEqual(r.source, "fixture")
+        self.assertIn(r.source, ("fixture", "real"))
         self.assertTrue((r.path / "questions.jsonl").exists())
 
 

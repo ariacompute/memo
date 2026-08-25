@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -48,12 +49,22 @@ def load(path: Path, limit: int | None = None) -> Dataset:
 
 def _ingest(backend: MemoBackend, ds: Dataset) -> None:
     backend.reset()
+    skipped = 0
     for item in ds.items:
-        for sess in item.get("haystack_sessions", []):
-            for turn in sess.get("chat", []):
-                text = turn.get("content") or turn.get("text") or ""
-                if text:
-                    backend.add(text, {"memo_type": "working"})
+        for sess in item.get("haystack_sessions", []) or []:
+            # 真实格式：session 为 [{role,content},...] 的列表；
+            # 合成 fixture：session 为 {session_id, chat:[...]} 的字典。
+            turns = sess if isinstance(sess, list) else sess.get("chat", []) or []
+            for turn in turns:
+                if not isinstance(turn, dict):
+                    continue
+                text = (turn.get("content") or turn.get("text") or "").strip()
+                if not text or not any(ch.isalnum() for ch in text):
+                    skipped += 1
+                    continue
+                backend.add(text, {"memo_type": "working"})
+    if skipped:
+        print(f"[longmemeval] skipped {skipped} empty/symbol-only turns", file=sys.stderr)
 
 
 def _answer(backend: MemoBackend, question: str, top_k: int) -> str:

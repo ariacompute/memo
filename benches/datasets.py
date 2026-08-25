@@ -25,8 +25,9 @@ class DatasetSpec:
     files: tuple[str, ...]
     # 人类可读下载指引
     manual: str
-    # 可选自动下载 URL（按顺序对应 files；为空表示仅手动）
-    urls: tuple[str, ...] = ()
+    # 可选自动下载：(源 URL, 落盘文件名) 列表；落盘名可与 files 不同（如上游改名）。
+    # 为空表示仅手动下载。
+    urls: tuple[tuple[str, str], ...] = ()
 
 
 DATASET_SPECS: dict[str, DatasetSpec] = {
@@ -34,12 +35,12 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         bench="locomo_refined",
         files=("questions.jsonl", "conversations.jsonl"),
         urls=(
-            "https://github.com/mem-eval-suite/LoCoMo_refined/raw/main/data/questions.jsonl",
-            "https://github.com/mem-eval-suite/LoCoMo_refined/raw/main/data/conversations.jsonl",
+            ("https://raw.githubusercontent.com/mem-eval-suite/LoCoMo_refined/main/data/public/questions.jsonl", "questions.jsonl"),
+            ("https://raw.githubusercontent.com/mem-eval-suite/LoCoMo_refined/main/data/public/conversations.jsonl", "conversations.jsonl"),
         ),
         manual=(
             "git clone https://github.com/mem-eval-suite/LoCoMo_refined ；"
-            "将 data/questions.jsonl 与 data/conversations.jsonl 放入 benches/data/locomo_refined/。"
+            "将 data/public/questions.jsonl 与 data/public/conversations.jsonl 放入 benches/data/locomo_refined/。"
             "许可：CC BY-NC 4.0（仅研究用途）。"
         ),
     ),
@@ -47,41 +48,36 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         bench="halumem",
         files=("sessions.jsonl", "memories.jsonl", "questions.jsonl"),
         urls=(
-            "https://huggingface.co/datasets/IAAR-Shanghai/HaluMem/resolve/main/sessions.jsonl",
-            "https://huggingface.co/datasets/IAAR-Shanghai/HaluMem/resolve/main/memories.jsonl",
-            "https://huggingface.co/datasets/IAAR-Shanghai/HaluMem/resolve/main/questions.jsonl",
+            ("https://huggingface.co/datasets/IAAR-Shanghai/HaluMem/resolve/main/HaluMem-Medium.jsonl", "HaluMem-Medium.jsonl"),
         ),
         manual=(
             "huggingface-cli download IAAR-Shanghai/HaluMem --local-dir benches/data/halumem ；"
-            "放置 sessions.jsonl / memories.jsonl / questions.jsonl。"
+            "真实数据为 HaluMem-Long.jsonl / HaluMem-Medium.jsonl（单文件，与合成 3 文件切分不同，"
+            "需格式适配器，当前 loader 仅支持合成切分；缺失时回退 fixtures）。"
         ),
     ),
     "longmemeval": DatasetSpec(
         bench="longmemeval",
-        # 仅需 S 变体即可评测；M/Oracle 为可选扩展（加载首个可用变体）
+        # 仅需 S 变体即可评测；M 为 2.7GB、Oracle 为可选。上游文件名带 _cleaned 后缀，落盘重命名为 longmemeval_s.json。
         files=("longmemeval_s.json",),
         urls=(
-            "https://github.com/xiaowu0162/LongMemEval/raw/main/data/longmemeval_s.json",
-            "https://github.com/xiaowu0162/LongMemEval/raw/main/data/longmemeval_m.json",
-            "https://github.com/xiaowu0162/LongMemEval/raw/main/data/longmemeval_oracle.json",
+            ("https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json", "longmemeval_s.json"),
         ),
         manual=(
-            "git clone https://github.com/xiaowu0162/LongMemEval ；"
-            "将 data/longmemeval_{s,m,oracle}.json 放入 benches/data/longmemeval/ "
-            "（至少提供 longmemeval_s.json）。"
+            "huggingface-cli download xiaowu0162/longmemeval-cleaned --local-dir benches/data/longmemeval ；"
+            "将 longmemeval_s_cleaned.json 重命名为 longmemeval_s.json 放入 benches/data/longmemeval/。"
         ),
     ),
     "personamem": DatasetSpec(
         bench="personamem",
         files=("shared_contexts_32k.jsonl", "questions_32k.csv"),
         urls=(
-            "https://github.com/bowen-upenn/PersonaMem/raw/main/data/shared_contexts_32k.jsonl",
-            "https://github.com/bowen-upenn/PersonaMem/raw/main/data/questions_32k.csv",
+            ("https://huggingface.co/datasets/bowen-upenn/PersonaMem-v1/resolve/main/shared_contexts_32k.jsonl", "shared_contexts_32k.jsonl"),
+            ("https://huggingface.co/datasets/bowen-upenn/PersonaMem-v1/resolve/main/questions_32k.csv", "questions_32k.csv"),
         ),
         manual=(
-            "git clone https://github.com/bowen-upenn/PersonaMem ；"
-            "将 data/shared_contexts_{32k,128k,1M}.jsonl 与 data/questions_{32k,128k,1M}.csv "
-            "放入 benches/data/personamem/。"
+            "huggingface-cli download bowen-upenn/PersonaMem-v1 --local-dir benches/data/personamem ；"
+            "放置 shared_contexts_{32k,128k,1M}.jsonl 与 questions_{32k,128k,1M}.csv。"
         ),
     ),
 }
@@ -118,20 +114,25 @@ def download(bench: str, dest: Path | None = None) -> Path:
     spec = DATASET_SPECS[bench]
     if not spec.urls:
         raise RuntimeError(f"[{bench}] no auto-download URL; manual steps:\n{spec.manual}")
-    if len(spec.urls) != len(spec.files):
-        raise RuntimeError(f"[{bench}] url/file count mismatch in DATASET_SPECS")
     target = dest or (_DATA_ROOT / bench)
     target.mkdir(parents=True, exist_ok=True)
-    for url, fname in zip(spec.urls, spec.files):
-        out = target / fname
+    # spec.urls 为 (源 URL, 落盘文件名) 列表；落盘名可与 spec.files 不同（上游改名/重命名）。
+    for url, dest_name in spec.urls:
+        out = target / dest_name
+        if out.exists():
+            continue
         try:
             req = urllib.request.Request(url, headers={"User-Agent": "aria-memo-bench/1.0"})
             with urllib.request.urlopen(req, timeout=60) as r, open(out, "wb") as w:
-                w.write(r.read())
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    w.write(chunk)
         except Exception as e:  # noqa: BLE001
             out.unlink(missing_ok=True)
             raise RuntimeError(
-                f"[{bench}] download failed for {fname}: {e}\n"
+                f"[{bench}] download failed for {dest_name}: {e}\n"
                 f"Network unavailable or blocked. Manual steps:\n{spec.manual}"
             ) from e
     return target

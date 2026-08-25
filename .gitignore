@@ -21,3 +21,12 @@ target
 #.idea/
 
 **/*.pyc
+.venv/
+memo.db
+
+# Benchmark: user-downloaded real datasets and generated reports (run artifacts)
+benches/data/locomo_refined/
+benches/data/halumem/
+benches/data/longmemeval/
+benches/data/personamem/
+benches/results/
