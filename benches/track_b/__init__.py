@@ -1,113 +1,148 @@
-from __future__ import annotations
+"""Track B — 四基准端到端记忆质量评测注册表。
 
-"""Track B：LoCoMo / LongMemEval / BEAM 端到端骨架。
-
-真实分数需要：
-1. 下载官方数据集到 benches/data/
-2. 配置答/判 LLM（OPENAI_API_KEY 等）
-3. 可用的 MemoBackend.add/search
-
-亦可将 adapters/ 接到 OmniMemEval / mem0 memo-benchmarks。
+基准：locomo_refined / halumem / longmemeval / personamem（移除早期 beam 与旧 locomo）。
+每个基准子包导出统一契约：
+    NAME: str
+    DATASET_FILES: tuple[str, ...]
+    def load(path, limit=None) -> Dataset
+    def run(backend, dataset, judge, top_k) -> list[Score]
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
 
-from adapters import build_backend
+from adapters import MemoBackend
 from common import utc_stamp, write_report
+from common.reporting import Score
+from datasets import resolve_dataset
+from judge import Judge
 
-BENCHMARKS = ("locomo", "longmemeval", "beam")
+BENCHMARKS = ("locomo_refined", "halumem", "longmemeval", "personamem")
+
+_REGISTRY = {
+    "locomo_refined": "track_b.locomo_refined",
+    "halumem": "track_b.halumem",
+    "longmemeval": "track_b.longmemeval",
+    "personamem": "track_b.personamem",
+}
 
 
-def _llm_configured() -> bool:
-    import os
+def _load_module(bench: str):
+    import importlib
 
-    return bool(
-        os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("BENCH_LLM_API_KEY")
-        or os.environ.get("ANTHROPIC_API_KEY")
-    )
-
-
-def run_one(
-    benchmark: str,
-    systems: list[str],
-    dry_run: bool,
-) -> dict[str, Any]:
-    rows: list[dict[str, Any]] = []
-    for name in systems:
-        backend = build_backend(name)
-        info = backend.info()
-        base = {
-            "name": info.name,
-            "benchmark": benchmark,
-            "includes_network": info.includes_network,
-            "offline": info.offline,
-        }
-        if not info.available:
-            rows.append({**base, "skipped": True, "reason": info.reason})
-            continue
-        if dry_run:
-            rows.append(
-                {
-                    **base,
-                    "dry_run": True,
-                    "pipeline": ["ingest", "retrieve", "answer", "judge", "aggregate"],
-                    "status": "ok",
-                    "note": "Skeleton only; no dataset scored",
-                }
-            )
-            backend.close()
-            continue
-        if not _llm_configured():
-            rows.append(
-                {
-                    **base,
-                    "skipped": True,
-                    "reason": "No LLM API key (OPENAI_API_KEY / BENCH_LLM_API_KEY); use --dry-run",
-                }
-            )
-            backend.close()
-            continue
-        # 完整实现点：加载 benches/data/<benchmark>/，调用 backend，LLM 答/判
-        rows.append(
-            {
-                **base,
-                "skipped": True,
-                "reason": (
-                    f"Dataset for {benchmark} not present under benches/data/{benchmark}/; "
-                    "download upstream then re-run. Compatible with OmniMemEval user-memo track."
-                ),
-            }
-        )
-        backend.close()
-    return {
-        "benchmark": benchmark,
-        "generated_at": utc_stamp(),
-        "dry_run": dry_run,
-        "systems": rows,
-    }
+    return importlib.import_module(_REGISTRY[bench])
 
 
 def run_track_b(
-    systems: list[str],
-    benchmarks: list[str],
-    dry_run: bool,
-    out_dir: Path,
-) -> Path:
-    results = [run_one(b, systems, dry_run=dry_run) for b in benchmarks]
-    payload = {
+    backend: MemoBackend,
+    judge: Judge | None,
+    out_dir: str | None = None,
+    benchmarks: list[str] | None = None,
+    top_k: int = 5,
+    limit: int | None = None,
+    do_ingest: bool = True,
+) -> dict[str, Any]:
+    """对所选基准跑端到端评测，聚合并报告。"""
+    selected = benchmarks or list(BENCHMARKS)
+    datasets_source: dict[str, str] = {}
+    bench_scores: list[dict[str, Any]] = []
+
+    for bench in selected:
+        if bench not in BENCHMARKS:
+            raise ValueError(f"unknown benchmark: {bench}; valid={BENCHMARKS}")
+        mod = _load_module(bench)
+        resolved = resolve_dataset(bench)
+        datasets_source[bench] = resolved.source
+        print(f"[track_b] {bench}: dataset={resolved.path} (source={resolved.source})")
+        dataset = mod.load(resolved.path, limit=limit)
+        scores = mod.run(backend, dataset, judge, top_k, do_ingest=do_ingest)
+        bench_scores.append(
+            {
+                "benchmark": bench,
+                "dataset_source": resolved.source,
+                "scores": [s.as_dict() for s in scores],
+            }
+        )
+
+    summary = {
         "track": "B",
-        "generated_at": utc_stamp(),
-        "dry_run": dry_run,
-        "benchmarks": results,
-        "systems": [s for r in results for s in r["systems"]],
-        "notes": (
-            "End-to-end quality depends on extraction + judge models. "
-            "Do not compare raw scores to managed mem0/MemOS without matching model stack. "
-            "See https://github.com/MemTensor/OmniMemEval and "
-            "https://github.com/mem0ai/memo-benchmarks"
-        ),
+        "model": backend.name(),
+        "timestamp": utc_stamp(),
+        "benchmarks": selected,
+        "datasets_source": datasets_source,
+        "judge": {
+            "available": judge is not None,
+            "model": judge.model if judge else None,
+            "calls": judge.stats.calls if judge else 0,
+            "errors": judge.stats.errors if judge else 0,
+        },
+        "systems": _flatten_systems(bench_scores),
     }
-    write_report(out_dir, "track_b", payload)
-    return out_dir / "track_b.json"
+    if out_dir is not None:
+        write_report(out_dir, "track_b", summary)
+    return summary
+
+
+def _flatten_systems(bench_scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """顶层 `systems` 保持列表结构，每个元素含 benchmark 与 scores，兼容既有报告渲染。"""
+    systems: list[dict[str, Any]] = []
+    for entry in bench_scores:
+        systems.append(
+            {
+                "system": entry["benchmark"],
+                "dataset_source": entry["dataset_source"],
+                "scores": entry["scores"],
+            }
+        )
+    return systems
+
+
+def dry_run(
+    backend: MemoBackend,
+    out_dir: str | None = None,
+    benchmarks: list[str] | None = None,
+) -> dict[str, Any]:
+    """只验证数据集加载与后端能力探测，不打分。"""
+    selected = benchmarks or list(BENCHMARKS)
+    report: dict[str, Any] = {
+        "track": "B",
+        "mode": "dry-run",
+        "model": backend.name(),
+        "capabilities": {
+            "list_memories": backend.supports("list_memories"),
+            "update": backend.supports("update"),
+        },
+        "benchmarks": [],
+    }
+    for bench in selected:
+        mod = _load_module(bench)
+        resolved = resolve_dataset(bench)
+        try:
+            dataset = mod.load(resolved.path)
+        except Exception as e:  # noqa: BLE001
+            report["benchmarks"].append(
+                {
+                    "benchmark": bench,
+                    "source": resolved.source,
+                    "status": "load-error",
+                    "error": str(e),
+                }
+            )
+            continue
+        report["benchmarks"].append(
+            {
+                "benchmark": bench,
+                "source": resolved.source,
+                "status": "ok",
+                "items": getattr(dataset, "size", None),
+                "dataset_files": list(mod.DATASET_FILES),
+            }
+        )
+    if out_dir is not None:
+        write_report(out_dir, "track_b_dry", report)
+    return report
+
+
+__all__ = ["BENCHMARKS", "run_track_b", "dry_run"]

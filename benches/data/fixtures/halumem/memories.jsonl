@@ -1,0 +1,3 @@
+{"MemoryID": 1, "SessionID": 1, "UserID": "user_a", "Content": "The user lives in Berlin.", "Type": "event", "Importance": 0.8, "Distraction": false}
+{"MemoryID": 2, "SessionID": 1, "UserID": "user_a", "Content": "The user works as a data scientist.", "Type": "knowledge", "Importance": 0.7, "Distraction": false}
+{"MemoryID": 3, "SessionID": 2, "UserID": "user_a", "Content": "The user moved from Berlin to Munich.", "Type": "event", "Importance": 0.9, "Distraction": false}

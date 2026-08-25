@@ -37,6 +37,11 @@
 ## 与评测的对应关系
 
 - **Track A**（`benches/track_a`）：延迟、吞吐、体积、离线、合成 Recall —— 最能体现 aria 差异化。
-- **Track B**（`benches/track_b`）：LoCoMo / LongMemEval / BEAM —— 需 LLM 答/判；报告必须分列离线条件与模型栈。
+- **Track B**（`benches/track_b`）：四基准 ——
+  - **locomo_refined**：混合问答，考察 token-F1/BLEU 与严格 judge 准确率。
+  - **halumem**：记忆提取/更新/QA 三任务，考察幻觉/更新/遗忘（最需要操作级能力）。
+  - **longmemeval**：长上下文时间推理，考察检索召回与 QA。
+  - **personamem**：个性化多选，完全离线可出多选准确率。
+  - 离线指标（F1/BLEU/多选/Recall@k）零网络可出；judge 指标需 OpenAI 兼容 LLM，缺则 skip 并写 reason。报告分列「离线条件」与「LLM 管线条件」。
 
 生成/更新微基准数字见 [bench_results.md](./bench_results.md) 与 `python benches/run.py`。

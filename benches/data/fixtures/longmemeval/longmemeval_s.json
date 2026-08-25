@@ -1,0 +1,22 @@
+[
+  {
+    "qa_id": "l1",
+    "user_id": "u1",
+    "qa_type": "single-session",
+    "question": "What restaurant did the user visit on Monday?",
+    "answer": "Sakura Sushi",
+    "haystack_sessions": [
+      {"session_id": "mon", "session_time": "2024-01-01", "chat": [{"role": "user", "content": "I went to Sakura Sushi on Monday and it was great."}]}
+    ]
+  },
+  {
+    "qa_id": "l2",
+    "user_id": "u1",
+    "qa_type": "temporal-reasoning",
+    "question": "When did the user visit Sakura Sushi?",
+    "answer": "Monday",
+    "haystack_sessions": [
+      {"session_id": "mon", "session_time": "2024-01-01", "chat": [{"role": "user", "content": "I went to Sakura Sushi on Monday."}]}
+    ]
+  }
+]

@@ -1,0 +1,2 @@
+question_id,question,answer,grounding,question_type,A,B,C,D,context,shared_context_id,end_index_in_shared_context,knowledge_used,distractor_a,distractor_b,distractor_c
+q1,What is the user's dietary preference?,A,"the user says they are a vegetarian",preference,vegetarian,vegan,pescatarian,omnivore,"I am a vegetarian. I prefer tea over coffee. I live in Lisbon.",ctx1,1,diet,,

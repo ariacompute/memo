@@ -1,0 +1,2 @@
+{"SessionID": 1, "UserID": "user_a", "Conversation": [{"speaker": "user", "text": "I live in Berlin."}, {"speaker": "user", "text": "I work as a data scientist."}]}
+{"SessionID": 2, "UserID": "user_a", "Conversation": [{"speaker": "user", "text": "I moved from Berlin to Munich."}]}

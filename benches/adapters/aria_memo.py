@@ -70,8 +70,18 @@ class AriaMemoBackend(MemoBackend):
         return proc.stdout.strip()
 
     def add(self, content: str, metadata: dict[str, Any] | None = None) -> str:
-        _ = metadata
-        return self._run("add", "--type", "working", "--content", content, "--importance", "0.5")
+        meta = metadata or {}
+        mtype = str(meta.get("memo_type") or meta.get("type") or "working")
+        importance = str(meta.get("importance", 0.5))
+        return self._run(
+            "add",
+            "--type",
+            mtype,
+            "--content",
+            content,
+            "--importance",
+            importance,
+        )
 
     def search(self, query: str, top_k: int = 5) -> list[SearchHit]:
         out = self._run("search", "--text", query, "--top-k", str(top_k))
@@ -88,6 +98,40 @@ class AriaMemoBackend(MemoBackend):
                 score = 0.0
             hits.append(SearchHit(id=str(i), content=content, score=score))
         return hits
+
+    # ---------- 可选能力 ----------
+    def supports(self, cap: str) -> bool:
+        return cap in ("list_memories", "update")
+
+    def list_memories(self) -> list[SearchHit]:
+        out = self._run("list", "--json")
+        hits: list[SearchHit] = []
+        try:
+            arr = json.loads(out)
+        except json.JSONDecodeError:
+            return hits
+        for item in arr:
+            hits.append(
+                SearchHit(
+                    id=str(item.get("id", "")),
+                    content=item.get("content", ""),
+                    score=float(item.get("importance", 0.0)),
+                    metadata={
+                        "memo_type": item.get("memo_type"),
+                        "version": item.get("version"),
+                    },
+                )
+            )
+        return hits
+
+    def update(self, memo_id: str, content: str | None = None, importance: float | None = None) -> None:
+        args: list[str] = ["update", "--id", memo_id]
+        if content is not None:
+            args += ["--content", content]
+        if importance is not None:
+            args += ["--importance", str(importance)]
+        self._run(*args)
+
 
     def microbench_json(self, size: int, top_k: int = 5, warmup: int = 10) -> dict[str, Any]:
         """调用进程内 `bench`，热路径不含 CLI 启动摊销到每次 add。"""

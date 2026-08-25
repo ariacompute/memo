@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .aria_memo import AriaMemoBackend
-from .base import BackendInfo, MemoBackend, SearchHit
+from .base import BackendInfo, MemoBackend, SearchHit, UnsupportedCapability
 from .letta_adapter import LettaBackend
 from .mem0_adapter import Mem0Backend
 from .memos_adapter import MemosBackend
@@ -37,6 +37,7 @@ __all__ = [
     "MemosBackend",
     "SearchHit",
     "SkipBackend",
+    "UnsupportedCapability",
     "ZepBackend",
     "build_backend",
 ]

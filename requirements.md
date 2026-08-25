@@ -23,6 +23,15 @@
 - 真实 LLM 提取/摘要（仅预留接口，M1 用规则 + 本地 embedder）。
 - 业界端到端 Judge 分数的持续对标流水线（见 §6 Track B；编排在 `benches/`）。
 
+### 1.2b Track B 基准范围（M2 增补）
+Track B 收敛为四个业界基准，移除早期骨架中的 `beam` 与旧 `locomo`：
+- **locomo_refined**：LoCoMo-Refined（CC BY-NC 4.0，github `mem-eval-suite/LoCoMo_refined`），单轮/多轮混合问答；离线出 token-F1 / BLEU，可选 LLM judge 准确率。
+- **halumem**：HaluMem（HF `IAAR-Shanghai/HaluMem`，Medium/Long），三任务（记忆提取 / 记忆更新 / 记忆 QA）；提取/更新为操作级，需 `list`/`update` 能力。
+- **longmemeval**：LongMemEval（S/M/Oracle 三变体），长上下文时间推理问答。
+- **personamem**：PersonaMem（github `bowen-upenn/PersonaMem`，32k/128k/1M），个性化多选问答；完全离线可出多选准确率。
+
+**judge 可选红线**：所有依赖 LLM 判定的指标仅在配置了 OpenAI 兼容凭据（`BENCH_LLM_API_KEY` 等）时计算，否则该指标 `skipped` 并写 `reason`；不伪造分数。离线指标（F1/BLEU/多选/Recall@k）在无数据集/无 LLM 时仍可经 fixture 跑通。
+
 ## 2. API
 
 ### 2.1 数据模型（memo-core）
@@ -74,7 +83,9 @@ pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
 - `memo add --type working --content "..." --importance 0.8`
 - `memo get --id <id>`
 - `memo search --text "..." --top-k 5`
-- `memo list [--type ...]`
+- `memo list [--type ...] [--json]`：新增 `--json` 开关，输出机器可读 JSON 数组（每项含 `id`/`memo_type`/`content`/`importance`/`version`/`metadata`），默认人类可读输出不变（向后兼容）。
+- `memo search --text "..." --top-k 5 [--json]`：新增 `--json` 开关，输出 JSON 数组（每项含 `score`/`id`/`content`/`memo_type`），默认 `score\tcontent` 逐行输出不变。
+- `memo update --id <id> [--content "..."] [--type ...] [--importance 0.8]`：按 id 更新记忆（内容变更自动重算 embedding、version+1），至少一项非空；缺失 id / 空 patch / 非法类型或 importance 走 `MemoError`。供 HaluMem 操作级评测。
 - `memo forget --id <id>`
 - `memo bench --size N --top-k K --warmup W --json`（M2：进程内微基准 JSON）
 
@@ -130,7 +141,7 @@ pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
 | 层 | 名称 | 目标 | 依赖 |
 |----|------|------|------|
 | **A** | 存储/检索层 | add/search 延迟与吞吐、包体/RSS、离线能力、合成集 Recall@k / MRR | aria 可零网络；他系统按 adapter 可用性跳过或标 N/A |
-| **B** | 端到端记忆质量 | LoCoMo / LongMemEval / BEAM（及 OmniMemEval 兼容入口） | 需外部 LLM（答/判）与可选云 API；结果须标注模型与费用属性 |
+| **B** | 端到端记忆质量 | locomo_refined / halumem / longmemeval / personamem（四基准注册表） | 离线指标零网络可跑；judge 类指标需 OpenAI 兼容 LLM 凭据，缺则 skip 并写原因 |
 
 定位声明：aria-memo 是 local-first 存储/检索层；B 层分数与依赖 LLM 抽取的托管产品**不可直接宣称同质碾压**，报告须分列「离线检索」与「LLM 管线」条件。
 
@@ -154,13 +165,16 @@ pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
 - 固定 seed 的合成集（`benches/data/synthetic_retrieval.json`）：同义改写、关键词命中、干扰项。
 - 指标：Recall@k、MRR（可选 nDCG）；CI 可跑小规模回归。
 
-### 6.4 Track B — 端到端质量
+### 6.4 Track B — 端到端质量（四基准注册表）
 
-- 基准：LoCoMo、LongMemEval、BEAM（1M/10M 按资源可选）。
-- 管线：ingest → retrieve → answer（外部 LLM）→ judge（外部 LLM）→ 聚合。
-- Adapter 契约：统一 `add` / `search`（及可选 `reset`）；实现位于 `benches/adapters/`。
-- 兼容：预留 OmniMemEval / mem0 `memo-benchmarks` 风格入口说明（`benches/README.md`）。
-- 产物：JSON + Markdown 报告；须记录模型名、日期、token/费用（若可得）、是否离线。
+- 基准：`locomo_refined` / `halumem` / `longmemeval` / `personamem`（移除早期 `beam` 与旧 `locomo`）。
+- 管线：各基准 `load(path) -> Dataset` → `backend.reset()` → 流式 ingest → 逐问题 `retrieve` → 离线指标计算 + 可选 `judge` → 聚合为 `Score` 列表。
+- 指标分层：
+  - 离线指标（无条件计算）：LoCoMo-Refined token-F1 / BLEU；PersonaMem 多选准确率；HaluMem / LongMemEval 检索层 Recall@k。
+  - judge 指标（需 OpenAI 兼容 LLM，凭据缺失则 skip）：LoCoMo-Refined 严格 judge 准确率；HaluMem 提取/更新/QA 的语义判定（Recall/Accuracy/FMR/幻觉率/遗漏率）；LongMemEval QA 准确率。
+- Adapter 契约扩展：统一 `add` / `search`（及可选 `reset`）；新增**可选能力** `list_memories` / `update`，默认抛 `UnsupportedCapability` 并降级；aria adapter 实现之（依赖 CLI `update` + `list --json`）供 HaluMem 操作级评测。
+- 数据集获取：`benches/datasets.py` 提供 `resolve_dataset(bench)`（真实目录优先、仓库内置 fixture 回退并标 `dataset_source: fixture`）与 `download(bench)`（urllib 拉取 HF/GitHub，失败打印手动指引）；`run.py` 增 `--download` / `--limit` / `--judge-model`。
+- 产物：JSON + Markdown 报告；离线指标与 judge 指标分列，judge 标注模型名；skip 项带 `reason`。
 
 ### 6.5 工程布局（`benches/`）
 
@@ -171,9 +185,13 @@ benches/
   run.py              # 入口：--track a|b|all
   common/             # 计时、分位数、报告写出
   track_a/            # 微基准 + 合成检索
-  track_b/            # LoCoMo / LongMemEval / BEAM runners
+  track_b/            # locomo_refined / halumem / longmemeval / personamem 注册表 + 子包
+  metrics/            # f1 / bleu / 多选 / recall@k 等离线指标
+  judge.py            # OpenAI 兼容 judge 客户端（可选）
+  datasets.py         # 数据集定位与下载
   adapters/           # aria / mem0 / memos / mempalace / zep / letta
-  data/               # 合成集；外部数据集下载说明
+  data/               # 合成集；fixtures/ 各基准极小合成样例；外部数据集下载说明
+  tests/              # Python 单测（离线、零网络、零真实 LLM）
   results/            # 生成结果（样例可入库，大体量 gitignore）
 ```
 
@@ -187,6 +205,7 @@ benches/
 - `docs/compare.md` 覆盖五系统 + aria，维度齐全。
 - `python benches/run.py --track a` 在默认小规模下可复现；结果写入 `benches/results/`。
 - Track A 合成检索对 aria 产出 Recall@k / MRR 数值。
-- `python benches/run.py --track b --dry-run` 能走通管线骨架；真实跑需文档化 API Key；缺密钥时明确 skip。
+- `python benches/run.py --track b --dry-run` 能走通四基准加载与能力探测；真实打分在 fixture 下离线可跑（F1/BLEU/多选/Recall@k 出数值），judge 指标在缺密钥时 skip 并写原因。
+- `cargo test` / clippy 仍全绿；新增 CLI `update` 与 `list --json` / `search --json` 有单测，默认输出形态不变（既有断言不破坏）。
 - 五系统 adapter 均存在且实现同一基类接口；不可用时报告 N/A + 原因。
-- `cargo test` / clippy 仍全绿；新增 `bench` CLI 有基础单测或 smoke。
+- 下载脚本在缺网络时抛错并打印手动指引，不静默失败。

@@ -14,8 +14,8 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - crates/storage：rusqlite 后端（建表/迁移/索引/CRUD/批量写入）+ 复制后端占位
 - crates/embed：ngram+哈希/TF-IDF 向量 embedder + 余弦相似度
 - crates/memo：manager(增删改查/检索/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘)
-- crates/cli：add/get/search/list/forget/bench/serve
-- benches/：Python 评测编排（Track A 微基准+合成检索；Track B LoCoMo/LongMemEval/BEAM）
+- crates/cli：add/get/search/list/forget/update/bench/serve（list/search 支持 `--json` 机器可读输出）
+- benches/：Python 评测编排（Track A 微基准+合成检索；Track B 四基准 locomo_refined/halumem/longmemeval/personamem）
 - docs/：compare.md 功能矩阵、bench_results.md 结果说明
 - 根：AGENTS.md / requirements.md / task.md / README.md
 
@@ -34,10 +34,12 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 ## 进行中需求
 - M1：见 task.md（已落地）。
 - M2：功能对比 + Track A/B 评测；验收见 requirements.md §6.7。
+- M3：Track B 四基准真实评测管线（locomo_refined/halumem/longmemeval/personamem）；CLI 增 `update` 与 `list/search --json` 供 HaluMem 操作级评测；judge 可选（缺凭据 skip 不伪造分数）。详见 task.md M3。
 
 ## 注意事项
 - 黄金路径：add → embed → 持久化 → search → retrieve 端到端单测。
 - 异常路径（重复 id、缺失、空内容、空嵌入、非法参数、损坏 DB）须有单测。
 - 复制/分布式后端仅抽象，后续里程碑。
-- Track B 依赖外部 LLM 时须在报告标明模型与非离线；缺密钥 skip 并写原因。
+- Track B 离线指标（F1/BLEU/多选/Recall@k）零网络可出；judge 指标依赖 OpenAI 兼容 LLM（BENCH_LLM_API_KEY），缺则 skip 并写 reason，不伪造分数。
+- `data/fixtures/<bench>/` 为内置合成样例（仅供单测/冒烟），报告标注 `dataset_source: fixture`，不可与正式基准分数直接对比。
 - requirements.md 须经人工逐项审核后方可据其生成 task.md。

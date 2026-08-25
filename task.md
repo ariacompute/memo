@@ -27,6 +27,24 @@
 15. [x] Track B：LoCoMo / LongMemEval / BEAM runner 骨架 + dry-run；五系统 adapter 接口齐全
 16. [x] 文档：`benches/README.md`、`docs/bench_results.md`、根 README / AGENTS 链到评测
 
+## M3 — Track B 四基准真实评测管线（当前进行中）
+
+> 需求：基于 LoCoMo-Refined / HaluMem / LongMemEval / PersonaMem 进行 memo 评测。
+> 已澄清：移除 beam + 旧 locomo；完整管线（loader+检索+离线指标真跑，judge 可选）；下载脚本+fixture；扩展 HaluMem 操作级能力并同步 CLI。
+
+17. [ ] `requirements.md` §1.2b/§2.4/§6.4/§6.5/§6.7 已更新（本步：规格先行，已落）
+18. [ ] CLI 增补：`update` 子命令 + `list --json` / `search --json`；保留默认人类可读输出；`commands.rs` 新增正常+异常单测
+19. [ ] `benches/metrics/`：token_f1 / bleu / multiple_choice_accuracy / recall_at_k / mrr（纯标准库，单测）
+20. [ ] `benches/judge.py`：OpenAI 兼容 judge 客户端，`from_env()` 无凭据返回 None；严格判定 prompt；超时/重试；记录模型名与计数
+21. [ ] `benches/datasets.py`：`DATASET_SPECS` + `resolve_dataset`（真实优先/fixture 回退，标 dataset_source）+ `download`（urllib，失败打印手动指引）
+22. [ ] 四基准 fixture（极小合成，结构同上游）：`lococo_refined` / `halumem` / `longmemeval` / `personamem`
+23. [ ] 重构 `track_b/` 为注册表：`BENCHMARKS`=四基准；每基准子包导出 `NAME`/`DATASET_FILES`/`load`/`run`；`run_track_b` 分派+聚合+报告（保留顶层展平 systems）
+24. [ ] `adapters/base.py` 扩展可选能力 `list_memories`/`update`+`UnsupportedCapability`；`aria_memo.py` 对接 CLI 新能力；其余系统默认降级
+25. [ ] `benches/tests/`：`test_metrics` / `test_loaders` / `test_track_b`（fake backend+fake judge 端到端，judge=None 时 skip）/ `test_adapters`（降级）/ `test_datasets`
+26. [ ] `run.py`：`--benchmarks` 默认四基准、移除 beam；新增 `--download` / `--limit` / `--judge-model`；汇总打印
+27. [ ] 文档同步：`benches/README.md` / `data/README.md` / `docs/compare.md` / `docs/bench_results.md` / `AGENTS.md`
+28. [ ] 验收：`cargo test` + `cargo clippy --all-targets` 全绿；`python -m pytest benches/` 离线全绿；`run.py --bench locomo_refined --ingest-only` 等可跑
+
 ## 验证
 
 ### M1

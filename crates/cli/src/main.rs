@@ -40,11 +40,28 @@ enum Command {
         text: String,
         #[arg(long, default_value_t = 5)]
         top_k: usize,
+        /// 机器可读 JSON 输出（id/score/content），默认 score\tcontent
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// 列出记忆
     List {
         #[arg(long)]
         r#type: Option<String>,
+        /// 机器可读 JSON 输出（id/type/content/importance/version/metadata），默认人类可读
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// 按 id 更新记忆
+    Update {
+        #[arg(long)]
+        id: String,
+        #[arg(long)]
+        content: Option<String>,
+        #[arg(long)]
+        r#type: Option<String>,
+        #[arg(long)]
+        importance: Option<f32>,
     },
     /// 遗忘记忆
     Forget {
@@ -103,11 +120,20 @@ fn run(cli: Cli) -> Result<()> {
                 Command::Get { id } => {
                     println!("{}", commands::get(&manager, &id)?);
                 }
-                Command::Search { text, top_k } => {
-                    println!("{}", commands::search(&manager, &text, top_k)?);
+                Command::Search { text, top_k, json } => {
+                    println!("{}", commands::search(&manager, &text, top_k, json)?);
                 }
-                Command::List { r#type } => {
-                    println!("{}", commands::list(&manager, r#type.as_deref())?);
+                Command::List { r#type, json } => {
+                    println!("{}", commands::list(&manager, r#type.as_deref(), json)?);
+                }
+                Command::Update {
+                    id,
+                    content,
+                    r#type,
+                    importance,
+                } => {
+                    commands::update(&manager, &id, content.as_deref(), r#type.as_deref(), importance)?;
+                    println!("updated {id}");
                 }
                 Command::Forget { id } => {
                     println!("{}", commands::forget(&manager, &id)?);

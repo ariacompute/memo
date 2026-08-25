@@ -1,10 +1,16 @@
 use memo::MemoManager;
-use memo_core::{MemoType, Result, SearchQuery};
+use memo_core::{MemoPatch, MemoType, Result, SearchQuery};
 use std::collections::HashMap;
 
-/// 新增记忆并返回 id。
+/// 新增记忆并返回 id。未知 memo_type 回退默认 working（类型口径差异不应阻断评测）。
 pub fn add(manager: &MemoManager, mem_type: &str, content: &str, importance: f32) -> Result<String> {
-    let mt = <MemoType as std::str::FromStr>::from_str(mem_type)?;
+    let mt = match <MemoType as std::str::FromStr>::from_str(mem_type) {
+        Ok(t) => t,
+        Err(_) => {
+            eprintln!("[warn] unknown memo_type '{}', falling back to working", mem_type);
+            MemoType::Working
+        }
+    };
     let id = manager.add(content, mt, HashMap::new(), importance)?;
     Ok(id)
 }
@@ -17,11 +23,26 @@ pub fn get(manager: &MemoManager, id: &str) -> Result<String> {
     }
 }
 
-/// 混合检索，返回逐行 `score\tcontent`。
-pub fn search(manager: &MemoManager, text: &str, top_k: usize) -> Result<String> {
+/// 混合检索。
+/// 默认返回逐行 `score\tcontent`（向后兼容）；`as_json` 时返回 JSON 数组。
+pub fn search(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) -> Result<String> {
     let mut q = SearchQuery::new(text);
     q.top_k = top_k;
     let rs = manager.search(q)?;
+    if as_json {
+        let arr: Vec<serde_json::Value> = rs
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "score": r.score,
+                    "id": r.memo.id,
+                    "memo_type": format!("{:?}", r.memo.memo_type),
+                    "content": r.memo.content,
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+    }
     let lines: Vec<String> = rs
         .iter()
         .map(|r| format!("{:.3}\t{}", r.score, r.memo.content))
@@ -30,14 +51,53 @@ pub fn search(manager: &MemoManager, text: &str, top_k: usize) -> Result<String>
 }
 
 /// 列出记忆（可按类型过滤）。
-pub fn list(manager: &MemoManager, mem_type: Option<&str>) -> Result<String> {
+/// 默认返回 `id [type] content`（向后兼容）；`as_json` 时返回 JSON 数组。
+pub fn list(manager: &MemoManager, mem_type: Option<&str>, as_json: bool) -> Result<String> {
     let mt = mem_type.map(<MemoType as std::str::FromStr>::from_str).transpose()?;
     let ms = manager.list(mt)?;
+    if as_json {
+        let arr: Vec<serde_json::Value> = ms
+            .iter()
+            .map(|m| {
+                serde_json::json!({
+                    "id": m.id,
+                    "memo_type": format!("{:?}", m.memo_type),
+                    "content": m.content,
+                    "importance": m.importance,
+                    "version": m.version,
+                    "metadata": m.metadata,
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+    }
     let lines: Vec<String> = ms
         .iter()
         .map(|m| format!("{} [{:?}] {}", m.id, m.memo_type, m.content))
         .collect();
     Ok(lines.join("\n"))
+}
+
+/// 按 id 更新记忆（内容/类型/重要性），至少一项非空。
+/// 内容变更自动重算 embedding、version+1。
+pub fn update(
+    manager: &MemoManager,
+    id: &str,
+    content: Option<&str>,
+    mem_type: Option<&str>,
+    importance: Option<f32>,
+) -> Result<()> {
+    let mt = match mem_type {
+        Some(t) => Some(<MemoType as std::str::FromStr>::from_str(t)?),
+        None => None,
+    };
+    let patch = MemoPatch {
+        content: content.map(|c| c.to_string()),
+        memo_type: mt,
+        metadata: None,
+        importance,
+    };
+    manager.update(&id.to_string(), patch)
 }
 
 /// 遗忘记忆，返回 "forgotten" 或 "not found"。
@@ -147,7 +207,7 @@ mod tests {
     fn cli_add_search_get_forget() {
         let m = mgr();
         let id = add(&m, "working", "user likes rust", 0.8).unwrap();
-        let out = search(&m, "rust", 5).unwrap();
+        let out = search(&m, "rust", 5, false).unwrap();
         assert!(out.contains("rust"));
         let got = get(&m, &id).unwrap();
         assert!(got.contains("user likes rust"));
@@ -156,9 +216,11 @@ mod tests {
     }
 
     #[test]
-    fn cli_invalid_type_errors() {
+    fn cli_unknown_type_falls_back_to_working() {
         let m = mgr();
-        assert!(add(&m, "bogus", "x", 0.5).is_err());
+        // 未知 memo_type 不应中断评测管线，降级为 working 并成功写入
+        let id = add(&m, "bogus", "x", 0.5).expect("unknown type should fall back, not error");
+        assert!(!id.is_empty());
     }
 
     #[test]
@@ -166,10 +228,45 @@ mod tests {
         let m = mgr();
         add(&m, "working", "alpha", 0.5).unwrap();
         add(&m, "short_term", "beta", 0.5).unwrap();
-        let all = list(&m, None).unwrap();
+        let all = list(&m, None, false).unwrap();
         assert!(all.contains("alpha") && all.contains("beta"));
-        let filtered = list(&m, Some("working")).unwrap();
+        let filtered = list(&m, Some("working"), false).unwrap();
         assert!(filtered.contains("alpha") && !filtered.contains("beta"));
+    }
+
+    #[test]
+    fn cli_list_and_search_json() {
+        let m = mgr();
+        let id = add(&m, "working", "user likes rust", 0.8).unwrap();
+        let arr: serde_json::Value = serde_json::from_str(&list(&m, None, true).unwrap()).unwrap();
+        assert!(arr.is_array());
+        assert_eq!(arr[0]["id"], id);
+        assert_eq!(arr[0]["content"], "user likes rust");
+        assert!(arr[0]["importance"].as_f64().is_some());
+
+        let s: serde_json::Value =
+            serde_json::from_str(&search(&m, "rust", 5, true).unwrap()).unwrap();
+        assert!(s.is_array());
+        assert_eq!(s[0]["id"], id);
+        assert!((s[0]["score"].as_f64().unwrap()) > 0.0);
+    }
+
+    #[test]
+    fn cli_update_success_and_errors() {
+        let m = mgr();
+        let id = add(&m, "working", "old content", 0.5).unwrap();
+        // 缺 id 已在 main 层保证；这里测空 patch 报错
+        assert!(update(&m, &id, None, None, None).is_err());
+        // 内容更新应成功，版本递增
+        update(&m, &id, Some("new content"), None, Some(0.9)).unwrap();
+        let got: serde_json::Value = serde_json::from_str(&get(&m, &id).unwrap()).unwrap();
+        assert_eq!(got["content"], "new content");
+        assert_eq!(got["importance"].as_f64().unwrap(), 0.9);
+        assert_eq!(got["version"].as_u64().unwrap(), 2);
+        // 非法类型报错
+        assert!(update(&m, &id, Some("x"), Some("bogus"), None).is_err());
+        // 不存在 id 报错
+        assert!(update(&m, "nope", Some("x"), None, None).is_err());
     }
 
     #[test]

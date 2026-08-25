@@ -1,0 +1,4 @@
+{"qa_id": "q1", "sample_id": "s1", "question": "What is the user's favorite programming language?", "answer": ["rust"], "category": "single", "evidence": ["s1"]}
+{"qa_id": "q2", "sample_id": "s1", "question": "Where did the user go last summer?", "answer": ["Kyoto", "Japan"], "category": "location", "evidence": ["s1"]}
+{"qa_id": "q3", "sample_id": "s1", "question": "What hobbies does the user mention?", "answer": ["hiking", "painting"], "category": "multi", "evidence": ["s1"]}
+{"qa_id": "q4", "sample_id": "s1", "question": "When did the user start learning rust?", "answer": ["2021"], "category": "temporal", "evidence": ["s1"]}
