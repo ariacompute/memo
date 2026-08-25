@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""统一记忆后端契约：Track A/B 均经此接口调用各系统。"""
+"""Unified memory-backend contract: both Track A and Track B call systems through this interface."""
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -8,7 +8,7 @@ from typing import Any
 
 
 class UnsupportedCapability(RuntimeError):
-    """请求后端未实现的可选能力时抛出。"""
+    """Raised when an optional capability not implemented by the backend is requested."""
 
 
 @dataclass
@@ -29,7 +29,7 @@ class BackendInfo:
 
 
 class MemoBackend(ABC):
-    """最小契约：add / search / reset；可选能力默认降级。"""
+    """Minimal contract: add / search / reset; optional capabilities degrade by default."""
 
     @abstractmethod
     def info(self) -> BackendInfo:
@@ -47,13 +47,13 @@ class MemoBackend(ABC):
     def search(self, query: str, top_k: int = 5) -> list[SearchHit]:
         ...
 
-    # ---------- 便捷方法 ----------
+    # ---------- convenience methods ----------
     def name(self) -> str:
         return self.info().name
 
-    # ---------- 可选能力（默认降级） ----------
+    # ---------- optional capabilities (degrade by default) ----------
     def supports(self, cap: str) -> bool:
-        """cap: 'list_memories' | 'update'。默认均不支持。"""
+        """cap: 'list_memories' | 'update'. Both unsupported by default."""
         return False
 
     def list_memories(self) -> list[SearchHit]:

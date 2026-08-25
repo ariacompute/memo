@@ -1,11 +1,11 @@
-"""LoCoMo-Refined 基准（CC BY-NC 4.0；github mem-eval-suite/LoCoMo_refined）。
+"""LoCoMo-Refined benchmark (CC BY-NC 4.0; github mem-eval-suite/LoCoMo_refined).
 
-数据：
+Data:
 - questions.jsonl: {qa_id, sample_id, question, answer:[...], category, evidence:[...]}
 - conversations.jsonl: {conversation_id, conversation:[{speaker,text}]}
-指标：
-- 离线：token-F1 / BLEU（多答案取最优），按 category 分组。
-- judge：严格 judge 准确率（需 OpenAI 兼容 LLM，缺则 skip）。
+Metrics:
+- offline: token-F1 / BLEU (best over multiple answers), grouped by category.
+- judge: strict judge accuracy (requires an OpenAI-compatible LLM; skipped if absent).
 """
 
 from __future__ import annotations
@@ -85,7 +85,7 @@ def _ingest(backend: MemoBackend, ds: Dataset) -> None:
         for turn in turns:
             text = turn.get("text") or turn.get("content") or ""
             norm = text.strip()
-            # 跳过纯空白或纯标点/符号（embedder 视为空 embedding）的对话轮。
+            # skip turns that are pure whitespace or pure punctuation/symbols (the embedder treats them as empty embeddings)
             if not norm or not any(ch.isalnum() for ch in norm):
                 skipped += 1
                 continue

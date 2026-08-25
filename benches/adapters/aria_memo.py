@@ -27,7 +27,7 @@ def _find_bin() -> str | None:
 
 
 class AriaMemoBackend(MemoBackend):
-    """通过 CLI 驱动 aria-memo（本地 SQLite，零网络）。"""
+    """Drive aria-memo via CLI (local SQLite, zero network)."""
 
     def __init__(self, bin_path: str | None = None) -> None:
         self._bin = bin_path or _find_bin()
@@ -73,7 +73,7 @@ class AriaMemoBackend(MemoBackend):
         meta = metadata or {}
         mtype = str(meta.get("memo_type") or meta.get("type") or "working")
         importance = str(meta.get("importance", 0.5))
-        # 用 `--content=...` 形式，避免内容以 '-' 开头被 clap 误判为选项。
+        # use the `--content=...` form to avoid content starting with '-' being misparsed as an option by clap
         return self._run(
             "add",
             "--type",
@@ -99,7 +99,7 @@ class AriaMemoBackend(MemoBackend):
             hits.append(SearchHit(id=str(i), content=content, score=score))
         return hits
 
-    # ---------- 可选能力 ----------
+    # ---------- optional capabilities ----------
     def supports(self, cap: str) -> bool:
         return cap in ("list_memories", "update")
 
@@ -134,7 +134,7 @@ class AriaMemoBackend(MemoBackend):
 
 
     def microbench_json(self, size: int, top_k: int = 5, warmup: int = 10) -> dict[str, Any]:
-        """调用进程内 `bench`，热路径不含 CLI 启动摊销到每次 add。"""
+        """Invoke the in-process `bench`; the hot path excludes CLI startup amortized over each add."""
         info = self.info()
         if not info.available:
             return {"system": "aria", "skipped": True, "reason": info.reason}

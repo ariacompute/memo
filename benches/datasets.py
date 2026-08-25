@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-"""数据集定位与下载。
+"""Dataset location and download.
 
-- `DATASET_SPECS`：各基准上游 URL + 必需文件清单（真实数据）。
-- `resolve_dataset(bench)`：优先 `benches/data/<bench>/` 真实目录；缺失则回退仓库内置
-  `benches/data/fixtures/<bench>/`，并在结果标注 `dataset_source='fixture'`（防误读）。
-- `download(bench)`：urllib 拉取；网络/依赖失败抛错并打印手动指引，不静默失败。
+- `DATASET_SPECS`: each benchmark's upstream URLs + required file list (real data).
+- `resolve_dataset(bench)`: prefer the real directory `benches/data/<bench>/`; fall back to
+  the repo-bundled `benches/data/fixtures/<bench>/`, tagging the result with
+  `dataset_source='fixture'` (to prevent misreading as real data).
+- `download(bench)`: fetch via urllib; on network/dependency failure, raise and print manual
+  instructions rather than failing silently.
 """
 
 from dataclasses import dataclass
@@ -21,15 +23,16 @@ _DATA_ROOT = _BENCH_ROOT / "data"
 @dataclass(frozen=True)
 class DatasetSpec:
     bench: str
-    # 必需文件（出现在 data/<bench>/ 或 fixtures/<bench>/）
+    # required files (present in data/<bench>/ or fixtures/<bench>/)
     files: tuple[str, ...]
-    # 人类可读下载指引
+    # human-readable download instructions
     manual: str
-    # 可选自动下载：(源 URL, 落盘文件名) 列表；落盘名可与 files 不同（如上游改名）。
-    # 为空表示仅手动下载。
+    # optional auto-download: list of (source URL, on-disk filename); the on-disk name may
+    # differ from `files` (e.g. when the upstream renames the file). Empty means manual-only.
     urls: tuple[tuple[str, str], ...] = ()
-    # 真实单文件标记：若存在，则视为 source=real（覆盖 files 的缺失判定）。
-    # 用于真实数据为单文件、与 fixtures 多文件切分不同的基准（如 halumem）。
+    # real single-file markers: if present, treated as source=real (overrides the missing-file
+    # check). Used for benchmarks whose real data is a single file split differently from the
+    # multi-file fixtures (e.g. halumem).
     real_markers: tuple[str, ...] = ()
 
 
@@ -42,9 +45,9 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
             ("https://raw.githubusercontent.com/mem-eval-suite/LoCoMo_refined/main/data/public/conversations.jsonl", "conversations.jsonl"),
         ),
         manual=(
-            "git clone https://github.com/mem-eval-suite/LoCoMo_refined ；"
-            "将 data/public/questions.jsonl 与 data/public/conversations.jsonl 放入 benches/data/locomo_refined/。"
-            "许可：CC BY-NC 4.0（仅研究用途）。"
+            "git clone https://github.com/mem-eval-suite/LoCoMo_refined ; "
+            "place data/public/questions.jsonl and data/public/conversations.jsonl into benches/data/locomo_refined/. "
+            "License: CC BY-NC 4.0 (research use only)."
         ),
     ),
     "halumem": DatasetSpec(
@@ -55,20 +58,21 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         ),
         real_markers=("HaluMem-Medium.jsonl", "HaluMem-Long.jsonl"),
         manual=(
-            "huggingface-cli download IAAR-Shanghai/HaluMem --local-dir benches/data/halumem ；"
-            "放置 HaluMem-Medium.jsonl / HaluMem-Long.jsonl（真实单文件格式，loader 已内置格式适配器）。"
+            "huggingface-cli download IAAR-Shanghai/HaluMem --local-dir benches/data/halumem ; "
+            "place HaluMem-Medium.jsonl / HaluMem-Long.jsonl (real single-file format; the loader has a built-in format adapter)."
         ),
     ),
     "longmemeval": DatasetSpec(
         bench="longmemeval",
-        # 仅需 S 变体即可评测；M 为 2.7GB、Oracle 为可选。上游文件名带 _cleaned 后缀，落盘重命名为 longmemeval_s.json。
+        # only the S variant is needed for evaluation; M is 2.7GB and Oracle is optional.
+        # the upstream filename has a _cleaned suffix and is renamed to longmemeval_s.json on disk.
         files=("longmemeval_s.json",),
         urls=(
             ("https://huggingface.co/datasets/xiaowu0162/longmemeval-cleaned/resolve/main/longmemeval_s_cleaned.json", "longmemeval_s.json"),
         ),
         manual=(
-            "huggingface-cli download xiaowu0162/longmemeval-cleaned --local-dir benches/data/longmemeval ；"
-            "将 longmemeval_s_cleaned.json 重命名为 longmemeval_s.json 放入 benches/data/longmemeval/。"
+            "huggingface-cli download xiaowu0162/longmemeval-cleaned --local-dir benches/data/longmemeval ; "
+            "rename longmemeval_s_cleaned.json to longmemeval_s.json and place it in benches/data/longmemeval/."
         ),
     ),
     "personamem": DatasetSpec(
@@ -79,8 +83,8 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
             ("https://huggingface.co/datasets/bowen-upenn/PersonaMem-v1/resolve/main/questions_32k.csv", "questions_32k.csv"),
         ),
         manual=(
-            "huggingface-cli download bowen-upenn/PersonaMem-v1 --local-dir benches/data/personamem ；"
-            "放置 shared_contexts_{32k,128k,1M}.jsonl 与 questions_{32k,128k,1M}.csv。"
+            "huggingface-cli download bowen-upenn/PersonaMem-v1 --local-dir benches/data/personamem ; "
+            "place shared_contexts_{32k,128k,1M}.jsonl and questions_{32k,128k,1M}.csv."
         ),
     ),
 }
@@ -100,7 +104,7 @@ def _check_files(base: Path, files: tuple[str, ...]) -> tuple[str, ...]:
 def resolve_dataset(bench: str) -> Resolved:
     spec = DATASET_SPECS[bench]
     real = _DATA_ROOT / bench
-    # 真实单文件标记优先（覆盖 files 的缺失判定）
+    # real single-file markers take priority (override the missing-file check for `files`)
     if spec.real_markers and any((real / m).exists() for m in spec.real_markers):
         return Resolved(path=real, source="real", missing=())
     missing = _check_files(real, spec.files)
@@ -123,7 +127,8 @@ def download(bench: str, dest: Path | None = None) -> Path:
         raise RuntimeError(f"[{bench}] no auto-download URL; manual steps:\n{spec.manual}")
     target = dest or (_DATA_ROOT / bench)
     target.mkdir(parents=True, exist_ok=True)
-    # spec.urls 为 (源 URL, 落盘文件名) 列表；落盘名可与 spec.files 不同（上游改名/重命名）。
+    # spec.urls is a list of (source URL, on-disk filename); the on-disk name may differ from
+    # spec.files (upstream rename/rename).
     for url, dest_name in spec.urls:
         out = target / dest_name
         if out.exists():

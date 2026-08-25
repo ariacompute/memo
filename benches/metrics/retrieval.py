@@ -4,7 +4,7 @@ from typing import Iterable
 
 
 def recall_at_k(relevant: Iterable[str], retrieved: Iterable[str], k: int) -> float:
-    """标准 per-query Recall@k：retrieved[:k] 中是否召回任一 relevant 项。"""
+    """Standard per-query Recall@k: whether any relevant item is retrieved within the top k."""
     rel = set(relevant)
     if not rel:
         return 0.0
@@ -14,7 +14,7 @@ def recall_at_k(relevant: Iterable[str], retrieved: Iterable[str], k: int) -> fl
 
 
 def mrr(relevant: Iterable[str], retrieved: Iterable[str], k: int | None = None) -> float:
-    """Mean Reciprocal Rank：首个命中相关项的位置倒数；无命中为 0。"""
+    """Mean Reciprocal Rank: the reciprocal of the rank of the first relevant item; 0 if none hit."""
     rel = set(relevant)
     if not rel:
         return 0.0
@@ -28,7 +28,7 @@ def mrr(relevant: Iterable[str], retrieved: Iterable[str], k: int | None = None)
 def retrieval_hit_rate(
     pairs: list[tuple[Iterable[str], Iterable[str]]], k: int
 ) -> tuple[float, int, int]:
-    """批量 Recall@k：每对 (relevant, retrieved)。返回 (recall, hits, total)。"""
+    """Batched Recall@k over (relevant, retrieved) pairs. Returns (recall, hits, total)."""
     total = len(pairs)
     if total == 0:
         return 0.0, 0, 0

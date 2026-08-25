@@ -5,11 +5,11 @@ from dataclasses import asdict, dataclass, field
 
 @dataclass
 class Score:
-    """统一指标结构。
+    """Unified metric structure.
 
-    - value: None 表示未计算（配合 skipped/reason，如 judge 指标缺凭据）。
-    - requires_llm: 报告据此分列离线 / LLM 管线条件。
-    - subset: 细分维度（category / question_type / 子任务）。
+    - value: None means not computed (paired with skipped/reason, e.g. a judge metric lacking credentials).
+    - requires_llm: the report uses this to separate offline / LLM-pipeline conditions.
+    - subset: a finer-grained dimension (category / question_type / sub-task).
     """
 
     name: str

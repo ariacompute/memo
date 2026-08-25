@@ -17,7 +17,7 @@ class TestDatasets(unittest.TestCase):
             self.assertTrue(DATASET_SPECS[b].files)
 
     def test_resolve_fixture_fallback_for_locomo(self):
-        # 直接指向 fixtures 目录，避免本机已下载的真实数据干扰
+        # point directly at the fixtures directory to avoid interference from locally downloaded real data
         FIX = Path(__file__).resolve().parents[1] / "data" / "fixtures" / "locomo_refined"
         self.assertTrue((FIX / "questions.jsonl").exists())
         r = resolve_dataset("locomo_refined")

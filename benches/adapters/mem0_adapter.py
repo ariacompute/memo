@@ -7,7 +7,7 @@ from .base import BackendInfo, MemoBackend, SearchHit
 
 
 class Mem0Backend(MemoBackend):
-    """mem0：优先 MemoryClient（云）；否则尝试 Memo（OSS）。"""
+    """mem0: prefer MemoryClient (cloud); otherwise try Memo (OSS)."""
 
     def __init__(self) -> None:
         self._client: Any = None

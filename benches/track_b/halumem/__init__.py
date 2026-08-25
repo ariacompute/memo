@@ -1,16 +1,20 @@
-"""HaluMem 基准（HF IAAR-Shanghai/HaluMem；Medium/Long）。
+"""HaluMem benchmark (HF IAAR-Shanghai/HaluMem; Medium/Long).
 
-三子任务：
-1) 记忆提取（extraction）：对话 → 提取原子记忆；指标 Recall / Accuracy / FMR / F1，
-   需 judge 比对（缺则 skip）。检索层 Recall@k 离线可出。
-2) 记忆更新（updating）：矛盾信息更新；需 `update` 能力 + judge；不支持则 N/A。
-3) 记忆 QA（qa）：准确率 / 幻觉率 / 遗漏率 + 检索 Recall@k（离线）。
+Three sub-tasks:
+1) Memory extraction: dialogue -> extract atomic memories; metrics Recall / Accuracy /
+   FMR / F1, requiring a judge for comparison (skipped if absent). The retrieval-layer
+   Recall@k is available offline.
+2) Memory updating: updating contradictory information; requires the `update` capability
+   + judge; reported as N/A if unsupported.
+3) Memory QA: accuracy / hallucination rate / omission rate + retrieval Recall@k (offline).
 
-数据：
-- 真实（HuggingFace IAAR-Shanghai/HaluMem）：单文件 HaluMem-Medium/Long.jsonl，
-  每行 {uuid, sessions:[{memory_points:[{memory_content,is_update,importance,...}],
-  dialogue:[{role,content}], questions:[{question,answer,question_type}]}]}；loader 内置格式适配器。
-- 合成 fixtures：sessions.jsonl / memories.jsonl / questions.jsonl（上游同形切分）。
+Data:
+- Real (HuggingFace IAAR-Shanghai/HaluMem): a single file HaluMem-Medium/Long.jsonl,
+  each line {uuid, sessions:[{memory_points:[{memory_content,is_update,importance,...}],
+  dialogue:[{role,content}], questions:[{question,answer,question_type}]}]}; a format
+  adapter is built into the loader.
+- Synthetic fixtures: sessions.jsonl / memories.jsonl / questions.jsonl (split upstream
+  into the same shape).
 """
 
 from __future__ import annotations
@@ -40,7 +44,7 @@ class Dataset:
 def load(path: Path, limit: int | None = None) -> Dataset:
     p = Path(path)
     sessions, memories, questions = [], [], []
-    # 真实单文件格式：HaluMem-Medium.jsonl / HaluMem-Long.jsonl
+    # real single-file format: HaluMem-Medium.jsonl / HaluMem-Long.jsonl
     real_file = None
     if p.is_file() and p.name in ("HaluMem-Medium.jsonl", "HaluMem-Long.jsonl"):
         real_file = p
@@ -89,7 +93,7 @@ def load(path: Path, limit: int | None = None) -> Dataset:
                 if limit and len(questions) >= limit:
                     break
         return Dataset(sessions=sessions, memories=memories, questions=questions, size=len(questions))
-    # 合成 fixtures 格式：sessions/memories/questions.jsonl
+    # synthetic fixtures format: sessions/memories/questions.jsonl
     if (p / "sessions.jsonl").exists():
         with (p / "sessions.jsonl").open(encoding="utf-8") as f:
             for ln in f:
@@ -114,10 +118,10 @@ def load(path: Path, limit: int | None = None) -> Dataset:
 
 
 
-# ---------- 子任务 1：记忆提取 ----------
+# ---------- Sub-task 1: memory extraction ----------
 def _run_extraction(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> list[Score]:
     scores: list[Score] = []
-    # 检索层 Recall@k：把 ground-truth memories 当作 relevant，检索其 content 是否命中
+    # retrieval-layer Recall@k: treat ground-truth memories as relevant and check whether their content is hit
     rel_pairs = []
     for m in ds.memories:
         if m.get("Distraction"):
@@ -130,14 +134,14 @@ def _run_extraction(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> l
 
         r, h, t = retrieval_hit_rate([(rl, rt) for rl, rt in rel_pairs], 5)
         scores.append(Score(name="retrieval_recall@5", value=r, requires_llm=False, subset="extraction"))
-    # 语义指标需 judge，缺则 skip
+    # semantic metrics require a judge; skip if absent
     if judge is None:
         for nm in ("memory_recall", "memory_accuracy", "false_memory_resistance", "f1"):
             scores.append(
                 skipped_score(nm, "no LLM judge credentials (BENCH_LLM_API_KEY)", subset="extraction")
             )
     else:
-        # 用 judge 比对提取记忆与 gold（合成：gold 直接比对）
+        # compare extracted memories with gold via the judge (synthetic: direct gold comparison)
         correct = 0
         total = len(ds.memories)
         for m in ds.memories:
@@ -156,7 +160,7 @@ def _run_extraction(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> l
     return scores
 
 
-# ---------- 子任务 2：记忆更新 ----------
+# ---------- Sub-task 2: memory updating ----------
 def _run_updating(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> list[Score]:
     scores: list[Score] = []
     if not backend.supports("update"):
@@ -175,7 +179,7 @@ def _run_updating(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> lis
         if q.get("UpdateType") in ("update", "delete") and "UpdateMemoryID" in q
     ]
     if not update_qs:
-        # 数据集不含更新型问题（如真实 HaluMem）；判为 N/A 而非假 0 分。
+        # dataset contains no update-type questions (e.g. real HaluMem); report as N/A rather than a misleading 0.0
         for nm in ("update_accuracy", "hallucination_rate", "omission_rate"):
             scores.append(
                 skipped_score(nm, "no update-type questions in this dataset", subset="updating")
@@ -196,7 +200,7 @@ def _run_updating(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> lis
     return scores
 
 
-# ---------- 子任务 3：记忆 QA ----------
+# ---------- Sub-task 3: memory QA ----------
 def _run_qa(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> list[Score]:
     scores: list[Score] = []
     rel_pairs = []
@@ -248,7 +252,7 @@ def run(
 ) -> list[Score]:
     if do_ingest:
         backend.reset()
-        # 写入 ground-truth 记忆作为知识库（合成/上游口径）
+        # ingest ground-truth memories as the knowledge base (synthetic / upstream convention)
         for m in dataset.memories:
             if m.get("Distraction"):
                 continue
@@ -256,7 +260,7 @@ def run(
                 m["Content"],
                 {"memo_type": m.get("Type", "working"), "importance": float(m.get("Importance", 0.5))},
             )
-        # 写入会话上下文
+        # ingest conversation context
         for s in dataset.sessions:
             for turn in s.get("Conversation", []):
                 text = turn.get("text") or turn.get("content") or ""

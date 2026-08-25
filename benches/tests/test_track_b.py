@@ -96,7 +96,7 @@ class TestTrackB(unittest.TestCase):
         mod = __import__("track_b.halumem", fromlist=["load", "run"])
         resolved = resolve_dataset("halumem")
         ds = mod.load(resolved.path, limit=2)
-        backend = FakeBackend(supports_update=False)  # 不支持 update
+        backend = FakeBackend(supports_update=False)  # update unsupported
         scores = mod.run(backend, ds, None, 5)
         upd = [s for s in scores if s.name == "update_accuracy"]
         self.assertTrue(upd and upd[0].skipped)

@@ -53,7 +53,7 @@ class TestLoaders(unittest.TestCase):
             ds = halumem.load(p)
         self.assertEqual(ds.size, 1)
         self.assertEqual(len(ds.memories), 2)
-        # is_update=True 映射为 Distraction=True（非相关记忆）
+        # is_update=True maps to Distraction=True (non-relevant memory)
         distract = [m for m in ds.memories if m.get("Distraction")]
         self.assertEqual(len(distract), 1)
         self.assertEqual(ds.sessions[0]["SessionID"], "u1")

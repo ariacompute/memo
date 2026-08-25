@@ -1,13 +1,16 @@
 from __future__ import annotations
 
-"""可选的 LLM judge 客户端（OpenAI 兼容 chat completions）。
+"""Optional LLM judge client (OpenAI-compatible chat completions).
 
-设计：
-- `from_env()` 读取 BENCH_LLM_API_KEY / OPENAI_API_KEY + BENCH_LLM_BASE_URL / BENCH_LLM_MODEL。
-- 无凭据时返回 None，调用方据此 skip 受 judge 影响的指标（不伪造分数、不静默忽略）。
-- 严格判定 prompt 对齐 LoCoMo-Refined 口径：预测需与真值不矛盾、完整不冗余、时间/地点粒度与真值一致。
-- 使用标准库 urllib 发起 HTTP，避免强依赖 openai SDK。
-- 禁止打印 API Key。
+Design:
+- `from_env()` reads BENCH_LLM_API_KEY / OPENAI_API_KEY + BENCH_LLM_BASE_URL / BENCH_LLM_MODEL.
+- When no credentials are present it returns None, and the caller skips judge-affected
+  metrics accordingly (no fabricated scores, no silent omission).
+- The strict-judgement prompt aligns with the LoCoMo-Refined convention: the prediction must
+  be non-contradictory with the gold answer, complete (no missing key fact), non-redundant, and
+  match the gold answer's granularity (e.g., date/place at the same specificity).
+- Uses the standard-library urllib for HTTP to avoid a hard dependency on the openai SDK.
+- Never prints the API key.
 """
 
 import json
@@ -42,7 +45,7 @@ class JudgeStats:
 
 
 class Judge:
-    """OpenAI 兼容 judge；构造失败或凭据缺失应返回 None（见 from_env）。"""
+    """OpenAI-compatible judge; construction failure or missing credentials should yield None (see from_env)."""
 
     def __init__(
         self,
@@ -66,11 +69,11 @@ class Judge:
             return True
         if t.startswith("no"):
             return False
-        # 容错：含 yes 但非否定
+        # tolerant fallback: contains "yes" but is not negated
         return "yes" in t and "not" not in t and "no" not in t
 
     def judge(self, question: str, gold: str, pred: str) -> bool | None:
-        """返回 True/False；网络/解析失败返回 None（调用方视为无法判定，skip 该样本）。"""
+        """Return True/False; on network/parse failure return None (the caller treats it as undecidable and skips the sample)."""
         self.stats.calls += 1
         body = {
             "model": self.model,
@@ -108,7 +111,7 @@ class Judge:
 
     @staticmethod
     def from_env(model_override: str | None = None) -> "Judge | None":
-        """无凭据返回 None。"""
+        """Return None when no credentials are present."""
         api_key = os.environ.get("BENCH_LLM_API_KEY") or os.environ.get("OPENAI_API_KEY")
         if not api_key:
             return None

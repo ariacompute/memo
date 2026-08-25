@@ -35,7 +35,7 @@ def run_microbench(systems: list[str], size: int, top_k: int, warmup: int) -> di
             rows.append(row)
             backend.close()
             continue
-        # 通用路径：Python 侧计时（可能含网络）
+        # generic path: Python-side timing (may include network)
         try:
             backend.reset()
             add_ms: list[float] = []
@@ -120,7 +120,7 @@ def run_retrieval_quality(systems: list[str], top_k: int) -> dict[str, Any]:
             rr: list[float] = []
             for q in queries:
                 hits = backend.search(q["text"], top_k=top_k)
-                # 匹配：命中内容与期望 doc 文本对齐
+                # match: align the hit content with the expected doc text
                 relevant = set(q["relevant_ids"])
                 hit_keys: list[str] = []
                 for h in hits:

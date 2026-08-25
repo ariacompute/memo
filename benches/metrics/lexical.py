@@ -8,16 +8,17 @@ _ARTICLES = {"a", "an", "the"}
 
 
 def normalize_text(text: str) -> list[str]:
-    """LoCoMo-Refined 口径归一化：小写、去标点、去冠词、空白切词。"""
+    """Normalize per LoCoMo-Refined convention: lowercase, strip punctuation and
+    articles, split on whitespace."""
     text = text.lower()
-    # 保留字母数字与空白；其余替换为空格
+    # keep alphanumerics and whitespace; replace everything else with a space
     text = re.sub(r"[^a-z0-9\s]", " ", text)
     tokens = [t for t in text.split() if t and t not in _ARTICLES]
     return tokens
 
 
 def token_f1(prediction: str, ground_truth: str) -> float:
-    """token 级 F1（LoCoMo-Refined 口径：单答案，取预测与真值的重叠）。"""
+    """Token-level F1 (LoCoMo-Refined convention: single answer, overlap of prediction and ground truth)."""
     pred_tok = normalize_text(prediction)
     gt_tok = normalize_text(ground_truth)
     if not pred_tok and not gt_tok:
@@ -34,14 +35,14 @@ def token_f1(prediction: str, ground_truth: str) -> float:
 
 
 def _bleu_single(prediction: str, reference: str) -> float:
-    """单参考 BLEU（带最短参考平滑）。"""
+    """Single-reference BLEU (with shortest-reference smoothing)."""
     pred = normalize_text(prediction)
     ref = normalize_text(reference)
     if not pred:
         return 0.0
     if not ref:
         return 0.0
-    # 1-gram 精度
+    # 1-gram precision
     pred_counts = Counter(pred)
     ref_counts = Counter(ref)
     clipped = {w: min(c, ref_counts.get(w, 0)) for w, c in pred_counts.items()}
@@ -49,7 +50,7 @@ def _bleu_single(prediction: str, reference: str) -> float:
     if overlap == 0:
         return 0.0
     precision = overlap / len(pred)
-    # 简短惩罚（仅当预测短于参考）
+    # brevity penalty (only when prediction is shorter than reference)
     bp = 1.0
     if len(pred) < len(ref):
         bp = math.exp(1 - len(ref) / len(pred))
@@ -57,14 +58,14 @@ def _bleu_single(prediction: str, reference: str) -> float:
 
 
 def bleu(prediction: str, references: list[str]) -> float:
-    """多候选取最大 BLEU。"""
+    """Take the max BLEU over multiple candidates."""
     if not references:
         return 0.0
     return max(_bleu_single(prediction, r) for r in references)
 
 
 def multiple_candidate_max(fn, prediction: str, ground_truths: list[str]) -> float:
-    """对多个真值候选取指标最大值（LoCoMo-Refined 多答案取最优）。"""
+    """Take the max metric over multiple ground-truth candidates (LoCoMo-Refined picks the best for multi-answer)."""
     if not ground_truths:
         return 0.0
     return max(fn(prediction, g) for g in ground_truths)

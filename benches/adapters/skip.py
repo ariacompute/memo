@@ -6,7 +6,7 @@ from .base import BackendInfo, MemoBackend, SearchHit
 
 
 class SkipBackend(MemoBackend):
-    """不可用时的占位后端：info 标明 skipped，调用 add/search 抛错。"""
+    """Placeholder backend used when unavailable: info marks it skipped, and add/search raise."""
 
     def __init__(self, name: str, reason: str, includes_network: bool = True) -> None:
         self._name = name

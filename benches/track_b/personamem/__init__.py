@@ -1,11 +1,13 @@
-"""PersonaMem 基准（github bowen-upenn/PersonaMem；32k/128k/1M）。
+"""PersonaMem benchmark (github bowen-upenn/PersonaMem; 32k/128k/1M).
 
-数据（HuggingFace bowen-upenn/PersonaMem-v1）：
-- shared_contexts_{N}.jsonl: 每行一个 JSON 对象 {hash: [{"role","content"}, ...]}
+Data (HuggingFace bowen-upenn/PersonaMem-v1):
+- shared_contexts_{N}.jsonl: one JSON object per line {hash: [{"role","content"}, ...]}
 - questions_{N}.csv: persona_id / user_question_or_message / correct_answer("(c)") /
-  all_options(JSON 字符串) / shared_context_id / end_index_in_shared_context
-  end_index_in_shared_context 决定写入记忆的上下文截断点（严防信息泄漏）
-指标：多选准确率（完全离线：选项与检索结果确定性匹配）。
+  all_options (JSON string) / shared_context_id / end_index_in_shared_context
+  end_index_in_shared_context decides the truncation point of the context written
+  to memory (strictly preventing information leakage)
+Metrics: multiple-choice accuracy (fully offline: deterministic match between
+options and retrieval results).
 """
 
 from __future__ import annotations
@@ -47,7 +49,7 @@ class Dataset:
 
 
 def _parse_options(raw: str) -> dict[str, str]:
-    """解析 all_options 字段（JSON 字符串，如 ['(a) foo', '(b) bar']）为 {letter: text}。"""
+    """Parse the all_options field (a JSON string like ['(a) foo', '(b) bar']) into {letter: text}."""
     raw = (raw or "").strip()
     if not raw:
         return {}
@@ -80,10 +82,10 @@ def load(path: Path, limit: int | None = None) -> Dataset:
                     continue
                 obj = json.loads(line)
                 if "context" in obj:
-                    # 合成 fixture 格式：{shared_context_id, context:[str,...]}
+                    # synthetic fixture format: {shared_context_id, context:[str,...]}
                     shared[obj["shared_context_id"]] = list(obj["context"])
                 else:
-                    # 真实格式：{hash: [{"role","content"}, ...]}
+                    # real format: {hash: [{"role","content"}, ...]}
                     for hash_key, messages in obj.items():
                         shared[hash_key] = [m.get("content", "") for m in messages if isinstance(m, dict)]
 
@@ -132,7 +134,7 @@ def _ingest(backend: MemoBackend, ds: Dataset) -> None:
     skipped = 0
     for q in ds.questions:
         ctx = ds.shared_contexts.get(q.shared_context_id, [])
-        # 仅写入截断点之前的上下文，避免信息泄漏
+        # only write the context before the truncation point to avoid information leakage
         truncated = ctx[: q.end_index] if q.end_index else ctx
         for text in truncated:
             norm = text.strip()
@@ -157,7 +159,7 @@ def run(
     rows = []
     for q in dataset.questions:
         hits = backend.search(q.question, top_k)
-        # 检索结果拼接作为「预测文本」，与正确选项匹配
+        # concatenate retrieval results as the "predicted text" and match against the correct option
         pred = " ".join(h.content for h in hits)
         rows.append((q.options, q.gold, pred))
 

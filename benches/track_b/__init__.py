@@ -1,7 +1,7 @@
-"""Track B — 四基准端到端记忆质量评测注册表。
+"""Track B — end-to-end memory-quality evaluation registry for four benchmarks.
 
-基准：locomo_refined / halumem / longmemeval / personamem（移除早期 beam 与旧 locomo）。
-每个基准子包导出统一契约：
+Benchmarks: locomo_refined / halumem / longmemeval / personamem (early beam and
+old locomo were removed). Each benchmark subpackage exports the unified contract:
     NAME: str
     DATASET_FILES: tuple[str, ...]
     def load(path, limit=None) -> Dataset
@@ -44,7 +44,7 @@ def run_track_b(
     limit: int | None = None,
     do_ingest: bool = True,
 ) -> dict[str, Any]:
-    """对所选基准跑端到端评测，聚合并报告。"""
+    """Run end-to-end evaluation on the selected benchmarks, aggregate and report."""
     selected = benchmarks or list(BENCHMARKS)
     datasets_source: dict[str, str] = {}
     bench_scores: list[dict[str, Any]] = []
@@ -86,7 +86,8 @@ def run_track_b(
 
 
 def _flatten_systems(bench_scores: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """顶层 `systems` 保持列表结构，每个元素含 benchmark 与 scores，兼容既有报告渲染。"""
+    """Keep the top-level `systems` as a list structure where each element holds a
+    benchmark and its scores, for compatibility with existing report rendering."""
     systems: list[dict[str, Any]] = []
     for entry in bench_scores:
         systems.append(
@@ -104,7 +105,7 @@ def dry_run(
     out_dir: str | None = None,
     benchmarks: list[str] | None = None,
 ) -> dict[str, Any]:
-    """只验证数据集加载与后端能力探测，不打分。"""
+    """Only validate dataset loading and backend capability probing; no scoring."""
     selected = benchmarks or list(BENCHMARKS)
     report: dict[str, Any] = {
         "track": "B",

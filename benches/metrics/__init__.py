@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-"""离线指标：词法 F1/BLEU、多选准确率、检索 Recall@k / MRR。
+"""Offline metrics: lexical F1/BLEU, multiple-choice accuracy, retrieval Recall@k / MRR.
 
-所有函数纯标准库实现，无外部依赖；可在无 LLM、无数据集 fixture 情况下单测。
+All functions are implemented with the standard library only (no external
+dependencies) and can be unit-tested without an LLM or dataset fixtures.
 """
 
 from .lexical import (

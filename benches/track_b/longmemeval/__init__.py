@@ -1,10 +1,10 @@
-"""LongMemEval 基准（github xiaowu0162/LongMemEval；S/M/Oracle 三变体）。
+"""LongMemEval benchmark (github xiaowu0162/LongMemEval; S/M/Oracle variants).
 
-数据：longmemeval_{s,m,oracle}.json，列表元素：
+Data: longmemeval_{s,m,oracle}.json, list elements:
     {qa_id, user_id, qa_type, question, answer, haystack_sessions:[{session_id, session_time, chat:[{role,content}]}]}
-指标：
-- 离线：检索层 Recall@k（基于 gold answer 是否命中检索结果）。
-- judge：QA 准确率（严格判定，需 OpenAI 兼容 LLM，缺则 skip）。
+Metrics:
+- offline: retrieval-layer Recall@k (whether the gold answer is hit among retrieved results).
+- judge: QA accuracy (strict judgement, requires an OpenAI-compatible LLM; skipped if absent).
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ class Dataset:
 def load(path: Path, limit: int | None = None) -> Dataset:
     p = Path(path)
     items: list[dict] = []
-    # 优先真实变体文件；fixture 仅 s
+    # prefer real variant files; fixtures only cover s
     for variant in ("longmemeval_s.json", "longmemeval_m.json", "longmemeval_oracle.json"):
         fp = p / variant
         if fp.exists():
@@ -43,7 +43,7 @@ def load(path: Path, limit: int | None = None) -> Dataset:
                     items.append(obj)
                     if limit and len(items) >= limit:
                         break
-            break  # 仅加载首个可用变体，避免 fixture 与真实重复
+            break  # load only the first available variant to avoid fixture/real duplication
     return Dataset(items=items, size=len(items))
 
 
@@ -52,8 +52,8 @@ def _ingest(backend: MemoBackend, ds: Dataset) -> None:
     skipped = 0
     for item in ds.items:
         for sess in item.get("haystack_sessions", []) or []:
-            # 真实格式：session 为 [{role,content},...] 的列表；
-            # 合成 fixture：session 为 {session_id, chat:[...]} 的字典。
+            # real format: session is a list of [{role, content}, ...];
+            # synthetic fixture: session is a dict {session_id, chat:[...]}.
             turns = sess if isinstance(sess, list) else sess.get("chat", []) or []
             for turn in turns:
                 if not isinstance(turn, dict):

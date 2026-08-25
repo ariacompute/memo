@@ -63,7 +63,7 @@ class TestMetrics(unittest.TestCase):
         self.assertAlmostEqual(acc, 2 / 3)
 
     def test_recall_at_k(self):
-        # 任一相关项命中即算召回（标准 per-query Recall@k）
+        # any hit among relevant items counts as a recall (standard per-query Recall@k)
         self.assertEqual(recall_at_k(["a", "b"], ["x", "a", "y"], 2), 1.0)
         self.assertEqual(recall_at_k(["a", "b"], ["x", "y", "z"], 3), 0.0)
         self.assertEqual(recall_at_k([], ["a"], 3), 0.0)

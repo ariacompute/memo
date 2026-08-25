@@ -28,7 +28,7 @@ def main() -> int:
     p.add_argument("--track", choices=("a", "b", "all"), default="a")
     p.add_argument("--systems", default="aria", help=f"comma list; full set: {DEFAULT_SYSTEMS}")
     p.add_argument("--backend", default=os.environ.get("BENCH_BACKEND", "aria"),
-                   help="Track B 单后端（默认 aria）")
+                   help="Track B single backend (default: aria)")
     p.add_argument("--size", type=int, default=1000, help="Track A corpus size for microbench")
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument("--warmup", type=int, default=10)
@@ -37,13 +37,13 @@ def main() -> int:
         default=",".join(BENCHMARKS),
         help=f"Track B benchmarks (default: {','.join(BENCHMARKS)})",
     )
-    p.add_argument("--limit", type=int, default=None, help="每条基准最多评测样本数")
+    p.add_argument("--limit", type=int, default=None, help="max samples evaluated per benchmark")
     p.add_argument("--ingest-only", action="store_true",
-                   help="只写入记忆不检索/打分")
-    p.add_argument("--dry-run", action="store_true", help="Track B 仅验证加载与契约")
+                   help="only ingest memories, skip retrieval/scoring")
+    p.add_argument("--dry-run", action="store_true", help="Track B: only validate loading and contract")
     p.add_argument("--download", action="store_true",
-                   help="运行前自动尝试下载缺失数据集")
-    p.add_argument("--judge-model", default=None, help="LLM judge 模型覆盖（需 BENCH_LLM_API_KEY）")
+                   help="auto-attempt to download missing datasets before running")
+    p.add_argument("--judge-model", default=None, help="LLM judge model override (requires BENCH_LLM_API_KEY)")
     p.add_argument(
         "--out",
         default="",
