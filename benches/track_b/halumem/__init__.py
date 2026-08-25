@@ -6,10 +6,11 @@
 2) 记忆更新（updating）：矛盾信息更新；需 `update` 能力 + judge；不支持则 N/A。
 3) 记忆 QA（qa）：准确率 / 幻觉率 / 遗漏率 + 检索 Recall@k（离线）。
 
-数据（合成/上游同形）：
-- sessions.jsonl: {SessionID, UserID, Conversation:[{speaker,text}]}
-- memories.jsonl: {MemoryID, SessionID, UserID, Content, Type, Importance, Distraction}
-- questions.jsonl: {QuestionID, Question, Answer:[...], QuestionType, UserID, SessionID, UpdateMemoryID?, UpdateType?}
+数据：
+- 真实（HuggingFace IAAR-Shanghai/HaluMem）：单文件 HaluMem-Medium/Long.jsonl，
+  每行 {uuid, sessions:[{memory_points:[{memory_content,is_update,importance,...}],
+  dialogue:[{role,content}], questions:[{question,answer,question_type}]}]}；loader 内置格式适配器。
+- 合成 fixtures：sessions.jsonl / memories.jsonl / questions.jsonl（上游同形切分）。
 """
 
 from __future__ import annotations
@@ -39,6 +40,56 @@ class Dataset:
 def load(path: Path, limit: int | None = None) -> Dataset:
     p = Path(path)
     sessions, memories, questions = [], [], []
+    # 真实单文件格式：HaluMem-Medium.jsonl / HaluMem-Long.jsonl
+    real_file = None
+    if p.is_file() and p.name in ("HaluMem-Medium.jsonl", "HaluMem-Long.jsonl"):
+        real_file = p
+    else:
+        for marker in ("HaluMem-Medium.jsonl", "HaluMem-Long.jsonl"):
+            if (p / marker).exists():
+                real_file = p / marker
+                break
+    if real_file:
+        with real_file.open(encoding="utf-8") as f:
+            for ln in f:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                rec = json.loads(ln)
+                sid = rec.get("uuid", "")
+                for s in rec.get("sessions", []):
+                    for m in s.get("memory_points", []):
+                        memories.append(
+                            {
+                                "Content": m.get("memory_content", ""),
+                                "Type": m.get("memory_type", "working"),
+                                "Importance": float(m.get("importance", 0.5) or 0.5),
+                                "Distraction": str(m.get("is_update", "False")).lower() == "true",
+                                "SessionID": sid,
+                            }
+                        )
+                    conv = [
+                        {"speaker": t.get("role", ""), "text": t.get("content", "")}
+                        for t in s.get("dialogue", [])
+                    ]
+                    sessions.append({"SessionID": sid, "Conversation": conv})
+                    for q in s.get("questions", []):
+                        ans = q.get("answer", "")
+                        questions.append(
+                            {
+                                "QuestionID": f"{sid}-{len(questions)}",
+                                "Question": q.get("question", ""),
+                                "Answer": [ans] if isinstance(ans, str) else (ans or []),
+                                "QuestionType": q.get("question_type", ""),
+                                "SessionID": sid,
+                            }
+                        )
+                        if limit and len(questions) >= limit:
+                            break
+                if limit and len(questions) >= limit:
+                    break
+        return Dataset(sessions=sessions, memories=memories, questions=questions, size=len(questions))
+    # 合成 fixtures 格式：sessions/memories/questions.jsonl
     if (p / "sessions.jsonl").exists():
         with (p / "sessions.jsonl").open(encoding="utf-8") as f:
             for ln in f:
@@ -60,6 +111,7 @@ def load(path: Path, limit: int | None = None) -> Dataset:
                     if limit and len(questions) >= limit:
                         break
     return Dataset(sessions=sessions, memories=memories, questions=questions, size=len(questions))
+
 
 
 # ---------- 子任务 1：记忆提取 ----------
@@ -117,12 +169,21 @@ def _run_updating(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> lis
             skipped_score("hallucination_rate", "backend lacks 'update' capability", subset="updating"),
             skipped_score("omission_rate", "backend lacks 'update' capability", subset="updating"),
         ]
+    update_qs = [
+        q
+        for q in ds.questions
+        if q.get("UpdateType") in ("update", "delete") and "UpdateMemoryID" in q
+    ]
+    if not update_qs:
+        # 数据集不含更新型问题（如真实 HaluMem）；判为 N/A 而非假 0 分。
+        for nm in ("update_accuracy", "hallucination_rate", "omission_rate"):
+            scores.append(
+                skipped_score(nm, "no update-type questions in this dataset", subset="updating")
+            )
+        return scores
     updated_ok = 0
-    total = 0
-    for q in ds.questions:
-        if q.get("UpdateType") not in ("update", "delete") or "UpdateMemoryID" not in q:
-            continue
-        total += 1
+    total = len(update_qs)
+    for q in update_qs:
         try:
             backend.update(q["UpdateMemoryID"], content=" ".join(q.get("Answer", []) or [q.get("Answer", "")]))
             updated_ok += 1

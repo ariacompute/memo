@@ -25,6 +25,40 @@ class TestLoaders(unittest.TestCase):
         self.assertTrue(ds.memories)
         self.assertTrue(ds.sessions)
 
+    def test_halumem_loader_real_format(self):
+        import json
+        import tempfile
+
+        rec = {
+            "uuid": "u1",
+            "sessions": [
+                {
+                    "memory_points": [
+                        {"memory_content": "Name is Martin", "memory_type": "Persona Memory",
+                         "is_update": "False", "importance": 0.8},
+                        {"memory_content": "Old job", "memory_type": "Event Memory",
+                         "is_update": "True", "importance": 0.5},
+                    ],
+                    "dialogue": [{"role": "user", "content": "I am Martin."}],
+                    "questions": [
+                        {"question": "What is the name?", "answer": "Martin",
+                         "question_type": "Persona"},
+                    ],
+                }
+            ],
+        }
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "HaluMem-Medium.jsonl"
+            p.write_text(json.dumps(rec) + "\n", encoding="utf-8")
+            ds = halumem.load(p)
+        self.assertEqual(ds.size, 1)
+        self.assertEqual(len(ds.memories), 2)
+        # is_update=True 映射为 Distraction=True（非相关记忆）
+        distract = [m for m in ds.memories if m.get("Distraction")]
+        self.assertEqual(len(distract), 1)
+        self.assertEqual(ds.sessions[0]["SessionID"], "u1")
+        self.assertEqual(ds.questions[0]["Answer"], ["Martin"])
+
     def test_longmemeval_loader_fixture(self):
         ds = longmemeval.load(FIX / "longmemeval")
         self.assertEqual(ds.size, 2)

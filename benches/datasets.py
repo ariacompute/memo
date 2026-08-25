@@ -28,6 +28,9 @@ class DatasetSpec:
     # 可选自动下载：(源 URL, 落盘文件名) 列表；落盘名可与 files 不同（如上游改名）。
     # 为空表示仅手动下载。
     urls: tuple[tuple[str, str], ...] = ()
+    # 真实单文件标记：若存在，则视为 source=real（覆盖 files 的缺失判定）。
+    # 用于真实数据为单文件、与 fixtures 多文件切分不同的基准（如 halumem）。
+    real_markers: tuple[str, ...] = ()
 
 
 DATASET_SPECS: dict[str, DatasetSpec] = {
@@ -50,10 +53,10 @@ DATASET_SPECS: dict[str, DatasetSpec] = {
         urls=(
             ("https://huggingface.co/datasets/IAAR-Shanghai/HaluMem/resolve/main/HaluMem-Medium.jsonl", "HaluMem-Medium.jsonl"),
         ),
+        real_markers=("HaluMem-Medium.jsonl", "HaluMem-Long.jsonl"),
         manual=(
             "huggingface-cli download IAAR-Shanghai/HaluMem --local-dir benches/data/halumem ；"
-            "真实数据为 HaluMem-Long.jsonl / HaluMem-Medium.jsonl（单文件，与合成 3 文件切分不同，"
-            "需格式适配器，当前 loader 仅支持合成切分；缺失时回退 fixtures）。"
+            "放置 HaluMem-Medium.jsonl / HaluMem-Long.jsonl（真实单文件格式，loader 已内置格式适配器）。"
         ),
     ),
     "longmemeval": DatasetSpec(
@@ -97,6 +100,9 @@ def _check_files(base: Path, files: tuple[str, ...]) -> tuple[str, ...]:
 def resolve_dataset(bench: str) -> Resolved:
     spec = DATASET_SPECS[bench]
     real = _DATA_ROOT / bench
+    # 真实单文件标记优先（覆盖 files 的缺失判定）
+    if spec.real_markers and any((real / m).exists() for m in spec.real_markers):
+        return Resolved(path=real, source="real", missing=())
     missing = _check_files(real, spec.files)
     if not missing:
         return Resolved(path=real, source="real", missing=())
@@ -108,6 +114,7 @@ def resolve_dataset(bench: str) -> Resolved:
         f"[{bench}] missing files {missing} in {real} and {fmissing} in {fixture}.\n"
         f"Download via `python benches/datasets.py --download {bench}` or manually:\n{spec.manual}"
     )
+
 
 
 def download(bench: str, dest: Path | None = None) -> Path:
