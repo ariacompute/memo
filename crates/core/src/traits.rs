@@ -1,27 +1,27 @@
 use crate::error::Result;
 use crate::model::*;
 
-/// 记忆存储抽象：增删改查与检索。
+/// Memory storage abstraction: CRUD and retrieval.
 pub trait MemoStore: Send + Sync {
-    /// 新增一条记忆；重复 id 返回 `DuplicateId`。
+    /// Add a memory; returns `DuplicateId` for a repeated id.
     fn add(&self, memo: &Memo) -> Result<()>;
 
-    /// 按 id 获取；不存在返回 `None`。
+    /// Fetch by id; returns `None` if not present.
     fn get(&self, id: &MemoId) -> Result<Option<Memo>>;
 
-    /// 按 id 更新（需已存在），不存在返回 `NotFound`。
+    /// Update by id (must already exist); returns `NotFound` if absent.
     fn update(&self, memo: &Memo) -> Result<()>;
 
-    /// 按 id 遗忘；返回是否实际删除。
+    /// Forget by id; returns whether a memory was actually removed.
     fn forget(&self, id: &MemoId) -> Result<bool>;
 
-    /// 混合检索（语义 + 关键词）。
+    /// Hybrid retrieval (semantic + keyword).
     fn search(&self, query: &SearchQuery) -> Result<Vec<ScoredMemo>>;
 
-    /// 列出记忆（可按类型过滤）；供巩固/去重/CLI 使用。
+    /// List memories (optionally filtered by type); used by consolidation/dedup/CLI.
     fn list(&self, memo_type: Option<MemoType>) -> Result<Vec<Memo>>;
 
-    /// 批量新增（默认逐条；后端可覆盖为事务实现）。
+    /// Batch add (default: one by one; backends may override with a transactional implementation).
     fn add_batch(&self, memories: &[Memo]) -> Result<()> {
         for m in memories {
             self.add(m)?;
@@ -30,19 +30,20 @@ pub trait MemoStore: Send + Sync {
     }
 }
 
-/// 文本嵌入抽象。可注入本地或第三方 embedder。
+/// Text embedding abstraction. Allows injecting a local or third-party embedder.
 pub trait Embedder: Send + Sync {
-    /// 将文本编码为定长向量；空文本/零向量返回 `EmptyEmbedding`。
+    /// Encode text into a fixed-length vector; returns `EmptyEmbedding` for empty text/zero vector.
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
-    /// 向量维度。
+    /// Vector dimension.
     fn dim(&self) -> usize;
 }
 
-/// 底层持久化后端抽象（M1 仅 SQLite 实现；复制后端为后续里程碑，rqlite 灵感）。
+/// Low-level persistence backend abstraction (M1 only implements SQLite; a replicated
+/// backend is a later milestone, inspired by rqlite).
 pub trait StorageBackend: Send + Sync {
-    /// 执行建表/迁移。
+    /// Run schema creation/migration.
     fn migrate(&self) -> Result<()>;
-    /// 后端种类标识。
+    /// Backend kind identifier.
     fn backend_kind(&self) -> &'static str;
 }
 
@@ -51,7 +52,7 @@ mod tests {
     use super::*;
     use crate::error::MemoError;
 
-    // 内存版 MemoStore，用于在不依赖 SQLite 的情况下验证 trait 契约。
+    // In-memory MemoStore used to verify the trait contract without depending on SQLite.
     use std::collections::HashMap as Map;
     use std::sync::Mutex;
 
@@ -145,14 +146,14 @@ mod tests {
         assert!(s.get(&"a".into()).unwrap().is_some());
         assert!(s.forget(&"a".into()).unwrap());
         assert!(!s.forget(&"a".into()).unwrap());
-        // 重复 id
+        // Duplicate id
         s.add(&m).unwrap();
         let dup = Memo {
             id: "a".into(),
             ..m.clone()
         };
         assert!(matches!(s.add(&dup), Err(MemoError::DuplicateId(_))));
-        // 空内容
+        // Empty content
         let mut bad = m.clone();
         bad.content = "".into();
         assert!(matches!(s.add(&bad), Err(MemoError::EmptyContent)));

@@ -21,13 +21,13 @@ CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
 CREATE INDEX IF NOT EXISTS idx_memories_deleted ON memories(deleted);
 ";
 
-/// 嵌入式 SQLite 记忆存储后端。
+/// Embedded SQLite memory storage backend.
 pub struct SqliteStore {
     conn: Mutex<Connection>,
 }
 
 fn db_err(e: rusqlite::Error) -> MemoError {
-    // 还原 row 映射中内裹的 MemoError（如损坏 BLOB / 元数据解析失败）。
+    // Recover a MemoError wrapped inside row mapping (e.g. corrupted BLOB / metadata parse failure).
     if let rusqlite::Error::FromSqlConversionFailure(_, _, inner) = &e {
         if let Some(me) = inner.downcast_ref::<MemoError>() {
             return me.clone();
@@ -112,7 +112,8 @@ fn row_to_memo(row: &Row) -> rusqlite::Result<Memo> {
     })
 }
 
-/// 内联余弦相似度（避免 storage 依赖 embed 层）；维度不一致/空返回 None。
+/// Inline cosine similarity (avoids making storage depend on the embed layer);
+/// returns None on dimension mismatch or empty vectors.
 fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
     if a.is_empty() || b.is_empty() || a.len() != b.len() {
         return None;
@@ -127,7 +128,8 @@ fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
 }
 
 impl SqliteStore {
-    /// 打开（或创建）数据库并迁移。`:memory:` 表示内存库；文件路径会自动创建父目录。
+    /// Open (or create) the database and migrate it. `:memory:` means an in-memory DB;
+    /// a file path's parent directory is created automatically.
     pub fn open(location: &str) -> Result<Self> {
         let conn = if location == ":memory:" {
             Connection::open_in_memory().map_err(db_err)?
@@ -146,7 +148,7 @@ impl SqliteStore {
         Ok(store)
     }
 
-    /// 建表与索引。
+    /// Create tables and indexes.
     pub fn migrate(&self) -> Result<()> {
         let conn = self.conn.lock().expect("sqlite lock poisoned");
         conn.execute_batch(SCHEMA).map_err(db_err)?;
@@ -381,7 +383,7 @@ mod tests {
         let m = mem("a", "hello world", Some(vec![0.1, 0.2, 0.3]));
         s.add(&m).unwrap();
         assert!(s.get(&"a".into()).unwrap().is_some());
-        // 重复 id
+        // Duplicate id
         assert!(matches!(s.add(&m), Err(MemoError::DuplicateId(_))));
         let mut m2 = m.clone();
         m2.content = "hello rust".into();
@@ -391,7 +393,7 @@ mod tests {
         s.update(&m2).unwrap();
         let got = s.get(&"a".into()).unwrap().unwrap();
         assert_eq!(got.content, "hello rust");
-        // 更新不存在
+        // Update non-existent
         let mut m3 = m.clone();
         m3.id = "nope".into();
         assert!(matches!(s.update(&m3), Err(MemoError::NotFound(_))));
@@ -415,11 +417,11 @@ mod tests {
         s.add(&mem("a", "user likes rust programming", Some(vec![0.9, 0.1, 0.0]))).unwrap();
         s.add(&mem("b", "banana smoothie recipe", Some(vec![0.0, 0.9, 0.1]))).unwrap();
         assert_eq!(s.list(None).unwrap().len(), 2);
-        // keyword 检索
+        // keyword search
         let q = SearchQuery::new("rust");
         let r = s.search(&q).unwrap();
         assert_eq!(r[0].memo.id, "a");
-        // 类型过滤
+        // type filter
         let mut q2 = SearchQuery::new("rust");
         q2.memo_type = Some(MemoType::Working);
         assert!(s.search(&q2).unwrap().is_empty());
@@ -436,7 +438,7 @@ mod tests {
             s.add_batch(&[dup, dup2]),
             Err(MemoError::DuplicateId(_))
         ));
-        // 因事务回滚，a 不应被写入
+        // a must not be written because the transaction rolled back
         assert!(s.get(&"a".into()).unwrap().is_none());
     }
 

@@ -1,11 +1,13 @@
 use memo_core::{Embedder, MemoError, Result};
 use std::collections::HashMap;
 
-/// 本地轻量嵌入器：将文本映射为定长向量。
+/// Local lightweight embedder: maps text to a fixed-length vector.
 ///
-/// 采用 hashing trick：对词的 1~2 gram 与字符 2 gram 做稳定哈希并累加词频（TF），
-/// 再做 L2 归一化。相似文本得到相近向量，可直接用余弦相似度比较。
-/// 不依赖任何外部模型或网络，适合边缘/移动端；通过 `Embedder` trait 可替换为本地小模型。
+/// Uses the hashing trick: stable-hashes word 1~2-grams and character 2-grams,
+/// accumulates term frequency (TF), then applies L2 normalization.
+/// Similar texts yield close vectors and can be compared directly with cosine similarity.
+/// Depends on no external model or network, making it suitable for edge/mobile;
+/// the `Embedder` trait allows swapping in a local small model.
 pub struct LocalEmbedder {
     dim: usize,
 }
@@ -28,7 +30,7 @@ impl LocalEmbedder {
         }
         let max = counts.values().cloned().fold(1.0f32, f32::max);
         for (h, c) in counts {
-            // 归一化词频（TF），避免长文本向量量级偏大。
+            // Normalize term frequency (TF) to keep long-text vectors from dominating.
             vec[h] = (c / max).sqrt();
         }
         let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
@@ -52,7 +54,7 @@ impl Embedder for LocalEmbedder {
     }
 }
 
-/// 分词：小写化后的词 1~2 gram（英文）与字符 2 gram（兼容 CJK）。
+/// Tokenize: lowercase word 1~2-grams (English) and character 2-grams (CJK-compatible).
 fn tokenize(text: &str) -> Vec<String> {
     let lower = text.to_lowercase();
     let mut toks: Vec<String> = Vec::new();
@@ -73,7 +75,7 @@ fn tokenize(text: &str) -> Vec<String> {
     toks
 }
 
-/// FNV-1a 稳定哈希到 [0, dim)。
+/// FNV-1a stable hash mapped into [0, dim).
 fn hash_dim(s: &str, dim: usize) -> usize {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in s.bytes() {

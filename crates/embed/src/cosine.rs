@@ -1,6 +1,7 @@
 use memo_core::{MemoError, Result};
 
-/// 余弦相似度。任一向量为空或维度不一致返回错误；仅当某向量模为 0 时返回 0（无方向）。
+/// Cosine similarity. Errors if either vector is empty or dimensions mismatch;
+/// returns 0 (no direction) only when a vector's magnitude is 0.
 pub fn cosine(a: &[f32], b: &[f32]) -> Result<f32> {
     if a.is_empty() || b.is_empty() {
         return Err(MemoError::EmptyEmbedding);

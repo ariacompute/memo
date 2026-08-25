@@ -1,9 +1,9 @@
 use thiserror::Error;
 
-/// 统一结果类型。
+/// Unified result type.
 pub type Result<T> = std::result::Result<T, MemoError>;
 
-/// 记忆存储统一错误。任何失败都必须显式返回，禁止静默吞错。
+/// Unified memory storage error. Any failure must be returned explicitly; silent swallowing is forbidden.
 #[derive(Debug, Error)]
 pub enum MemoError {
     #[error("io error: {0}")]

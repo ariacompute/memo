@@ -2,7 +2,8 @@ use memo::MemoManager;
 use memo_core::{MemoPatch, MemoType, Result, SearchQuery};
 use std::collections::HashMap;
 
-/// 新增记忆并返回 id。未知 memo_type 回退默认 working（类型口径差异不应阻断评测）。
+/// Add a memory and return its id. An unknown memo_type falls back to `working`
+/// (type schema differences must not break the evaluation pipeline).
 pub fn add(manager: &MemoManager, mem_type: &str, content: &str, importance: f32) -> Result<String> {
     let mt = match <MemoType as std::str::FromStr>::from_str(mem_type) {
         Ok(t) => t,
@@ -15,7 +16,7 @@ pub fn add(manager: &MemoManager, mem_type: &str, content: &str, importance: f32
     Ok(id)
 }
 
-/// 按 id 获取记忆（JSON），不存在返回 "not found"。
+/// Fetch a memory by id (JSON); returns "not found" if absent.
 pub fn get(manager: &MemoManager, id: &str) -> Result<String> {
     match manager.get(&id.to_string())? {
         Some(m) => Ok(serde_json::to_string_pretty(&m).unwrap_or_else(|_| "{}".to_string())),
@@ -23,8 +24,8 @@ pub fn get(manager: &MemoManager, id: &str) -> Result<String> {
     }
 }
 
-/// 混合检索。
-/// 默认返回逐行 `score\tcontent`（向后兼容）；`as_json` 时返回 JSON 数组。
+/// Hybrid search.
+/// Defaults to per-line `score\tcontent` (for backward compatibility); returns a JSON array when `as_json`.
 pub fn search(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) -> Result<String> {
     let mut q = SearchQuery::new(text);
     q.top_k = top_k;
@@ -50,8 +51,8 @@ pub fn search(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) ->
     Ok(lines.join("\n"))
 }
 
-/// 列出记忆（可按类型过滤）。
-/// 默认返回 `id [type] content`（向后兼容）；`as_json` 时返回 JSON 数组。
+/// List memories (optionally filtered by type).
+/// Defaults to `id [type] content` (for backward compatibility); returns a JSON array when `as_json`.
 pub fn list(manager: &MemoManager, mem_type: Option<&str>, as_json: bool) -> Result<String> {
     let mt = mem_type.map(<MemoType as std::str::FromStr>::from_str).transpose()?;
     let ms = manager.list(mt)?;
@@ -78,8 +79,8 @@ pub fn list(manager: &MemoManager, mem_type: Option<&str>, as_json: bool) -> Res
     Ok(lines.join("\n"))
 }
 
-/// 按 id 更新记忆（内容/类型/重要性），至少一项非空。
-/// 内容变更自动重算 embedding、version+1。
+/// Update a memory by id (content/type/importance), at least one field must be set.
+/// Content changes trigger embedding recomputation and increment the version.
 pub fn update(
     manager: &MemoManager,
     id: &str,
@@ -100,7 +101,7 @@ pub fn update(
     manager.update(&id.to_string(), patch)
 }
 
-/// 遗忘记忆，返回 "forgotten" 或 "not found"。
+/// Forget a memory, returning "forgotten" or "not found".
 pub fn forget(manager: &MemoManager, id: &str) -> Result<String> {
     Ok(if manager.forget(&id.to_string())? {
         "forgotten".to_string()
@@ -109,7 +110,7 @@ pub fn forget(manager: &MemoManager, id: &str) -> Result<String> {
     })
 }
 
-/// 进程内微基准：add / search，输出 JSON（供 `benches/` Python 解析）。
+/// In-process micro-benchmark: add / search, output as JSON (parsed by the `benches/` Python scripts).
 pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize) -> Result<String> {
     if size == 0 {
         return Err(memo_core::MemoError::InvalidParam(
@@ -218,7 +219,7 @@ mod tests {
     #[test]
     fn cli_unknown_type_falls_back_to_working() {
         let m = mgr();
-        // 未知 memo_type 不应中断评测管线，降级为 working 并成功写入
+        // An unknown memo_type must not break the evaluation pipeline; degrade to working and write successfully
         let id = add(&m, "bogus", "x", 0.5).expect("unknown type should fall back, not error");
         assert!(!id.is_empty());
     }
@@ -255,17 +256,17 @@ mod tests {
     fn cli_update_success_and_errors() {
         let m = mgr();
         let id = add(&m, "working", "old content", 0.5).unwrap();
-        // 缺 id 已在 main 层保证；这里测空 patch 报错
+        // Missing id is guaranteed at the main layer; here we test that an empty patch errors
         assert!(update(&m, &id, None, None, None).is_err());
-        // 内容更新应成功，版本递增
+        // Content update should succeed and bump the version
         update(&m, &id, Some("new content"), None, Some(0.9)).unwrap();
         let got: serde_json::Value = serde_json::from_str(&get(&m, &id).unwrap()).unwrap();
         assert_eq!(got["content"], "new content");
         assert_eq!(got["importance"].as_f64().unwrap(), 0.9);
         assert_eq!(got["version"].as_u64().unwrap(), 2);
-        // 非法类型报错
+        // Invalid type errors
         assert!(update(&m, &id, Some("x"), Some("bogus"), None).is_err());
-        // 不存在 id 报错
+        // Non-existent id errors
         assert!(update(&m, "nope", Some("x"), None, None).is_err());
     }
 

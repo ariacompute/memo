@@ -1,6 +1,6 @@
 use memo_core::*;
 
-/// 重要性按半衰期指数衰减（参考 MemOS 生命周期管理）。
+/// Importance decays exponentially by half-life (inspired by MemOS lifecycle management).
 pub fn decay_importance(m: &mut Memo, elapsed_sec: i64, half_life_sec: i64) {
     if half_life_sec <= 0 || elapsed_sec <= 0 {
         return;
@@ -10,7 +10,7 @@ pub fn decay_importance(m: &mut Memo, elapsed_sec: i64, half_life_sec: i64) {
     m.importance = if v < 0.0 { 0.0 } else { v as f32 };
 }
 
-/// 删除重要性低于阈值的记忆，返回删除条数。
+/// Forget memories whose importance is below the floor; returns the number removed.
 pub fn prune(store: &dyn MemoStore, floor: f32) -> Result<usize> {
     if !(0.0..=1.0).contains(&floor) {
         return Err(MemoError::InvalidParam("floor out of [0,1]".into()));
@@ -52,7 +52,7 @@ mod tests {
         let mut m = sample("a", 1.0);
         decay_importance(&mut m, 100, 100);
         assert!((m.importance - 0.5).abs() < 1e-6);
-        // 经过时间 0 不衰减
+        // Zero elapsed time means no decay
         decay_importance(&mut m, 0, 100);
         assert!((m.importance - 0.5).abs() < 1e-6);
     }

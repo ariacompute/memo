@@ -1,6 +1,6 @@
 use memo_core::{MemoError, Result, StorageBackend};
 
-/// 后端种类标识。
+/// Backend kind identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BackendKind {
     Embedded,
@@ -16,8 +16,8 @@ impl BackendKind {
     }
 }
 
-/// 复制/分布式后端占位（M1 仅做抽象，rqlite 灵感）。
-/// 真实实现将基于 Raft 在多个边缘节点间复制记忆，列为后续里程碑。
+/// Replicated/distributed backend placeholder (M1 only abstracts it, inspired by rqlite).
+/// A real implementation would replicate memories across edge nodes via Raft; deferred to a later milestone.
 pub struct ReplicatedBackend;
 
 impl ReplicatedBackend {
@@ -25,7 +25,7 @@ impl ReplicatedBackend {
         Self
     }
 
-    /// M1 未实现：调用即返回 `Other` 错误。
+    /// Unimplemented in M1: returns an `Other` error when called.
     pub fn open(_location: &str) -> Result<()> {
         Err(MemoError::Other(
             "replicated backend not implemented in M1".into(),

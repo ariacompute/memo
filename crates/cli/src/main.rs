@@ -1,4 +1,4 @@
-//! aria-memo: 端侧长期记忆存储命令行入口。
+//! aria-memo: on-device long-term memory storage command-line entry point.
 mod commands;
 
 use clap::{Parser, Subcommand};
@@ -9,9 +9,9 @@ use memo_storage::SqliteStore;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "memo", about = "端侧长期记忆存储 CLI")]
+#[command(name = "memo", about = "on-device long-term memory storage CLI")]
 struct Cli {
-    /// 数据库路径，默认 ./memo.db
+    /// Database path, defaults to ./memo.db
     #[arg(long, default_value = "memo.db")]
     db: String,
     #[command(subcommand)]
@@ -20,7 +20,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// 新增一条记忆
+    /// Add a memory
     Add {
         #[arg(long, default_value = "working")]
         r#type: String,
@@ -29,30 +29,30 @@ enum Command {
         #[arg(long, default_value_t = 0.5)]
         importance: f32,
     },
-    /// 按 id 获取
+    /// Fetch by id
     Get {
         #[arg(long)]
         id: String,
     },
-    /// 混合检索
+    /// Hybrid search
     Search {
         #[arg(long)]
         text: String,
         #[arg(long, default_value_t = 5)]
         top_k: usize,
-        /// 机器可读 JSON 输出（id/score/content），默认 score\tcontent
+        /// Machine-readable JSON output (id/score/content); default is score\tcontent
         #[arg(long, default_value_t = false)]
         json: bool,
     },
-    /// 列出记忆
+    /// List memories
     List {
         #[arg(long)]
         r#type: Option<String>,
-        /// 机器可读 JSON 输出（id/type/content/importance/version/metadata），默认人类可读
+        /// Machine-readable JSON output (id/type/content/importance/version/metadata); default is human-readable
         #[arg(long, default_value_t = false)]
         json: bool,
     },
-    /// 按 id 更新记忆
+    /// Update a memory by id
     Update {
         #[arg(long)]
         id: String,
@@ -63,21 +63,21 @@ enum Command {
         #[arg(long)]
         importance: Option<f32>,
     },
-    /// 遗忘记忆
+    /// Forget a memory
     Forget {
         #[arg(long)]
         id: String,
     },
-    /// 进程内微基准（JSON），供 benches/ 解析
+    /// In-process micro-benchmark (JSON), parsed by benches/
     Bench {
-        /// 写入与检索次数（库规模）
+        /// Number of writes and searches (corpus size)
         #[arg(long, default_value_t = 1000)]
         size: usize,
         #[arg(long, default_value_t = 5)]
         top_k: usize,
         #[arg(long, default_value_t = 10)]
         warmup: usize,
-        /// 保留兼容；输出始终为 JSON
+        /// Kept for compatibility; output is always JSON
         #[arg(long, default_value_t = true)]
         json: bool,
     },

@@ -4,7 +4,7 @@ use memo_storage::SqliteStore;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-/// 记忆管理器：组合嵌入器与存储后端，提供高层记忆操作。
+/// Memory manager: combines an embedder with a storage backend to expose high-level memory operations.
 pub struct MemoManager {
     embedder: Arc<dyn Embedder>,
     store: Arc<dyn MemoStore>,
@@ -15,13 +15,13 @@ impl MemoManager {
         Self { embedder, store }
     }
 
-    /// 便捷构造：使用 SQLite 后端。
+    /// Convenience constructor using the SQLite backend.
     pub fn with_sqlite(embedder: Arc<dyn Embedder>, db_path: &str) -> Result<Self> {
         let store = SqliteStore::open(db_path)?;
         Ok(Self::new(embedder, Arc::new(store)))
     }
 
-    /// 新增记忆：自动嵌入并持久化。返回生成的 id。
+    /// Add a memory: automatically embeds and persists it, returning the generated id.
     pub fn add(
         &self,
         content: &str,
@@ -57,7 +57,7 @@ impl MemoManager {
         self.store.get(id)
     }
 
-    /// 更新记忆；内容变更时重算嵌入、版本 +1。
+    /// Update a memory; recomputes the embedding and bumps the version when content changes.
     pub fn update(&self, id: &MemoId, patch: MemoPatch) -> Result<()> {
         if patch.is_empty() {
             return Err(MemoError::InvalidParam("empty patch".into()));
@@ -94,7 +94,7 @@ impl MemoManager {
         self.store.forget(id)
     }
 
-    /// 混合检索：自动嵌入查询文本后委托存储层打分。
+    /// Hybrid search: embeds the query text then delegates scoring to the storage layer.
     pub fn search(&self, mut query: SearchQuery) -> Result<Vec<ScoredMemo>> {
         query.validate()?;
         if query.query_embedding.is_none() {
@@ -104,7 +104,7 @@ impl MemoManager {
         self.store.search(&query)
     }
 
-    /// 巩固：提升（或降低）记忆重要性，夹紧到 [0,1]。
+    /// Consolidate: raise (or lower) a memory's importance, clamped to [0,1].
     pub fn consolidate(&self, id: &MemoId, delta: f32) -> Result<()> {
         let mut m = self
             .store
@@ -116,7 +116,8 @@ impl MemoManager {
         self.store.update(&m)
     }
 
-    /// 去重：相似度 >= 阈值 的记忆合并入保留项（拼接内容、刷新时间戳）。
+    /// Deduplicate: memories with similarity >= threshold are merged into the kept item
+    /// (content is concatenated and the timestamp is refreshed).
     pub fn dedup(&self, threshold: f32) -> Result<usize> {
         if !(0.0..=1.0).contains(&threshold) {
             return Err(MemoError::InvalidParam("threshold out of [0,1]".into()));
@@ -231,7 +232,7 @@ mod tests {
             ),
             Err(MemoError::NotFound(_))
         ));
-        // 空补丁返回 InvalidParam，而非 NotFound
+        // An empty patch returns InvalidParam, not NotFound
         assert!(matches!(
             m.update(&"missing".to_string(), MemoPatch::default()),
             Err(MemoError::InvalidParam(_))

@@ -1,4 +1,5 @@
-//! memo-storage: 嵌入式持久化后端（SQLite/rusqlite），负责建表、迁移、索引与 CRUD。
+//! memo-storage: embedded persistence backend (SQLite/rusqlite) responsible for
+//! schema creation, migration, indexing, and CRUD.
 
 pub mod backend;
 pub mod sqlite;
