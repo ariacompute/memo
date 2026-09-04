@@ -9,7 +9,7 @@ use memo_storage::SqliteStore;
 use std::sync::Arc;
 
 #[derive(Parser)]
-#[command(name = "memo", about = "on-device long-term memory storage CLI")]
+#[command(name = "memo", about = "On-device long-term memory storage CLI")]
 struct Cli {
     /// Database path, defaults to ./memo.db
     #[arg(long, default_value = "memo.db")]
