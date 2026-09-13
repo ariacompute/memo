@@ -3,7 +3,7 @@
 工程上下文入口，渐进式披露：先看概述/架构/目录，动手时再看规范/命令/进行中/注意。
 
 ## 概述
-Rust 端侧（边缘/移动）长期记忆存储，为 LLM Agent 提供 local-first 记忆层。参考 rqlite/turso（嵌入式持久化）与 MemOS/mem0/MemPalace（记忆管理）。M1：三层记忆、SQLite、本地嵌入、混合检索、巩固/去重/遗忘、CLI。M2：与 mem0/MemOS/MemPalace/Zep/Letta 的功能矩阵 + Track A/B 评测（`benches/` Python）。零网络依赖、纯 Rust（不引入重型 ML 框架）。
+Rust 端侧（边缘/移动）长期记忆存储，为 LLM Agent 提供 local-first 记忆层。参考 rqlite/turso（嵌入式持久化）与 MemOS/mem0/MemPalace（记忆管理）。M1：三层记忆、SQLite、本地嵌入、混合检索 search + 纯向量召回 recall、巩固/去重/遗忘、CLI。M2：与 mem0/MemOS/MemPalace/Zep/Letta 的功能矩阵 + Track A/B 评测（`benches/` Python）。零网络依赖、纯 Rust（不引入重型 ML 框架）。
 
 ## 架构（分层 + trait 解耦）
 core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) → memo(编排) → cli(入口)。
@@ -13,7 +13,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - crates/core：Memo 模型、MemoError、MemoStore/Embedder/StorageBackend trait
 - crates/storage：rusqlite 后端（建表/迁移/索引/CRUD/批量写入）+ 复制后端占位
 - crates/embed：ngram+哈希/TF-IDF 向量 embedder + 余弦相似度
-- crates/memo：manager(增删改查/检索/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘)
+- crates/memo：manager(增删改查/检索(search 混合 + recall 纯向量)/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘)
 - crates/cli：add/get/search/list/forget/update/bench/serve（list/search 支持 `--json` 机器可读输出）
 - benches/：Python 评测编排（Track A 微基准+合成检索；Track B 四基准 locomo_refined/halumem/longmemeval/personamem）
 - docs/：compare.md 功能矩阵、bench_results.md 结果说明
@@ -28,7 +28,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 
 ## 常用命令
 - `cargo test` / `cargo test -p memo-core` / `cargo build` / `cargo clippy --all-targets`
-- `cargo run -p aria-memo -- --help` / `cargo run -p aria-memo -- bench --size 100 --json`
+- `cargo run -p aria-memo -- --help` / `cargo run -p aria-memo -- bench --size 100 --json` / `cargo run -p aria-memo -- recall --text "rust systems programming" --top-k 5`
 - `python benches/run.py --track a` / `python benches/run.py --track b --dry-run`
 
 ## 进行中需求
@@ -37,8 +37,8 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - M3：Track B 四基准真实评测管线（locomo_refined/halumem/longmemeval/personamem）；CLI 增 `update` 与 `list/search --json` 供 HaluMem 操作级评测；judge 可选（缺凭据 skip 不伪造分数）。详见 task.md M3。
 
 ## 注意事项
-- 黄金路径：add → embed → 持久化 → search → retrieve 端到端单测。
-- 异常路径（重复 id、缺失、空内容、空嵌入、非法参数、损坏 DB）须有单测。
+- 黄金路径：add → embed → 持久化 → search/recall → retrieve 端到端单测。
+- 异常路径（重复 id、缺失、空内容、空嵌入、非法参数（importance 越界 / top_k=0 / query 文本空）、损坏/非法 metadata DB、recall/search 拒绝非法 query）须有单测。
 - 复制/分布式后端仅抽象，后续里程碑。
 - Track B 离线指标（F1/BLEU/多选/Recall@k）零网络可出；judge 指标依赖 OpenAI 兼容 LLM（BENCH_LLM_API_KEY），缺则 skip 并写 reason，不伪造分数。
 - `data/fixtures/<bench>/` 为内置合成样例（仅供单测/冒烟），报告标注 `dataset_source: fixture`，不可与正式基准分数直接对比。

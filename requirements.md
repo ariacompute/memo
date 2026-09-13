@@ -9,7 +9,7 @@
 - 记忆条目 CRUD：`add` / `get` / `update` / `forget`。
 - 本地嵌入：ngram + 哈希/TF-IDF 向量表示，余弦相似度；可注入自定义 `Embedder`。
 - 持久化：嵌入式 SQLite（rusqlite bundled），自动建表/迁移/索引、批量写入。
-- 检索：语义（向量余弦）+ 关键词（LIKE）混合打分，支持 top-k 与阈值。
+- 检索：两条入口 —— `search` 为语义（向量余弦）+ 关键词（LIKE）**混合**打分（支持 top-k 与阈值）；`recall` 为**纯向量（余弦-only）**召回，按 query 与记忆的余弦相似度排序（keyword 权重为 0）。
 - 记忆管理：`consolidate`（巩固：提升重要性/合并）、`dedup`（去重：相似度阈值合并）。
 - 生命周期：分层老化、重要性衰减、遗忘（默认硬删除，预留软删除标记）。
 - 统一错误 `MemoError`；可选 CLI（add/get/search/list/forget）。
@@ -63,12 +63,24 @@ pub struct SearchQuery {
 }
 
 pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
+
+/// Pure vector (semantic) recall query — cosine-only scoring (no keyword).
+pub struct RecallQuery {
+    pub text: String,
+    pub top_k: usize,            // 默认 10
+    pub score_threshold: f32,
+    pub memo_type: Option<MemoType>,
+    pub query_embedding: Option<Vec<f32>>, // 预置 query 向量可跳过 embedder
+}
+// RecallQuery::validate()：text 为空 或 top_k == 0 -> InvalidParam
 ```
 
 ### 2.2 trait（memo-core）
 - `MemoStore`：`add` / `get` / `update` / `forget` / `search`。
 - `Embedder`：`fn embed(&self, text: &str) -> Result<Vec<f32>, MemoError>`。
 - `StorageBackend`：`open` / `migrate` / 原始 CRUD（抽象，供复制后端扩展）。
+- 纯向量召回 `recall` 是 `MemoManager` 方法（复用 `search` 的存储层，令
+  `semantic_weight=1` / `keyword_weight=0`），**不在** `MemoStore` trait 上。
 
 ### 2.3 MemoManager 公共 API（memo crate）
 - `new(embedder: Arc<dyn Embedder>, store: Arc<dyn MemoStore>) -> Self`
@@ -77,6 +89,9 @@ pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
 - `update(id, patch: MemoPatch) -> Result<()>`（content 变更时重算 embedding、version+1）
 - `forget(id) -> Result<bool>`（返回是否删除成功；默认硬删除）
 - `search(query) -> Result<Vec<ScoredMemo>>`（语义+关键词混合，过滤 deleted）
+- `recall(query: RecallQuery) -> Result<Vec<ScoredMemo>>`：**纯向量语义召回**，
+  嵌入 query 文本后按余弦相似度排序（keyword 权重为 0）；`query.query_embedding`
+  已预置时跳过 embedder。`search` 为混合检索，`recall` 为纯向量，二者区分明确。
 - `consolidate(id, delta_importance)` / `dedup(threshold)` -> 见 §1.1
 
 ### 2.4 CLI（aria-memo，二进制名 `aria-memo` / 命令显示名 `memo`）
@@ -85,6 +100,7 @@ pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
 - `memo search --text "..." --top-k 5`
 - `memo list [--type ...] [--json]`：新增 `--json` 开关，输出机器可读 JSON 数组（每项含 `id`/`memo_type`/`content`/`importance`/`version`/`metadata`），默认人类可读输出不变（向后兼容）。
 - `memo search --text "..." --top-k 5 [--json]`：新增 `--json` 开关，输出 JSON 数组（每项含 `score`/`id`/`content`/`memo_type`），默认 `score\tcontent` 逐行输出不变。
+- `memo recall --text "..." --top-k 5`：纯向量召回，输出 `score\tcontent` 逐行；`memo recall --text "..." --top-k 5 --json`：输出 JSON 数组（含 `score`/`id`/`content`/`memo_type`），与 `search` 形态一致。
 - `memo update --id <id> [--content "..."] [--type ...] [--importance 0.8]`：按 id 更新记忆（内容变更自动重算 embedding、version+1），至少一项非空；缺失 id / 空 patch / 非法类型或 importance 走 `MemoError`。供 HaluMem 操作级评测。
 - `memo forget --id <id>`
 - `memo bench --size N --top-k K --warmup W --json`（M2：进程内微基准 JSON）
@@ -128,8 +144,8 @@ pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
 - `cargo clippy --all-targets` 无告警。
 - 交叉编译：`cargo build --target aarch64-linux-android` 通过（或 `wasm32-unknown-unknown -p memo-core -p memo-embed`）。
 - 黄金路径单测：`add → search → get` 端到端跑通。
-- 异常单测：重复 id、缺失、空内容、空嵌入、非法参数、损坏 DB 打开失败。
-- 覆盖率：核心逻辑（manager / search / consolidate / dedup / lifecycle）均有正常 + 异常用例。
+- 异常单测：重复 id、缺失、空内容、空嵌入、非法参数（importance 越界 / top_k=0 / query 文本空）、损坏/非法 metadata DB、recall/search 拒绝非法 query。
+- 覆盖率：核心逻辑（manager / search / recall / consolidate / dedup / lifecycle / storage / cli）均有正常 + 异常用例；纯向量召回 `recall` 与 `RecallQuery` 校验有单测。
 
 ## 6. 业界对比与评测（M2）
 

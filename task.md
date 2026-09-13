@@ -14,6 +14,8 @@
 7. [x] 实现 `memo`：`MemoManager`、`lifecycle` + 单测
 8. [x] 实现 `aria-memo`：add/get/search/list/forget + 单测
 9. [x] 验收：`cargo test` 全绿、clippy 无告警、wasm32 编译通过
+10. [x] 新增纯向量召回：`memo-core` 增加 `RecallQuery`（余弦-only 打分 + `validate()`）；`MemoManager::recall` 按余弦相似度排序（与混合 `search` 区分）；CLI 新增 `recall` 子命令（`score\tcontent` / `--json`）
+11. [x] 全仓单测补强（正常 + 异常路径）：core（`MemoPatch` 空校验、`RecallQuery` 校验、`memo_type` FromStr、`embedding` 序列化/反序列化长度不匹配）、embed（tokenize 单/二元、`hash_dim` 范围与确定性、零模长 cosine、`keyword` 部分/零分）、memo（`update` 仅类型/仅 importance/空 content 与 importance 越界、`dedup` 非法阈值/noop、`consolidate` 缺失 id→NotFound、`search`/`recall` 拒绝非法 query、recall 复用外部 embedding 跳过 embedder）、storage（in-memory 构建、批量 add、损坏/非法 metadata JSON、`backend` kind 往返）、cli（`bench` 拒绝 top_k=0、`get` 缺失/`search` 空）、lifecycle（`decay` 缩减并跳过非法、`prune` 非法 floor/noop）
 
 ## M2 — 业界功能/性能评测（A + B）
 
@@ -51,6 +53,7 @@
 - `cargo test`：正常 + 异常路径全绿。
 - `cargo clippy --all-targets`：无告警。
 - 黄金路径 / 异常单测 / wasm32 编译。
+- 纯向量召回 `recall` 与混合检索 `search` 单测全绿；`recall` 语义相似记忆排名第一。
 
 ### M2
 - `docs/compare.md` 维度齐全。
