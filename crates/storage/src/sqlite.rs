@@ -467,4 +467,84 @@ mod tests {
         let r = s.get(&"x".into());
         assert!(matches!(r, Err(MemoError::Serialization(_))));
     }
+
+    #[test]
+    fn embedding_serialize_roundtrip() {
+        let buf = serialize_embedding(Some(&[0.1, 0.2, 0.3])).unwrap();
+        assert_eq!(deserialize_embedding(&buf).unwrap(), Some(vec![0.1, 0.2, 0.3]));
+        assert_eq!(deserialize_embedding(&[]).unwrap(), None);
+    }
+
+    #[test]
+    fn embedding_deserialize_length_mismatch() {
+        // n=1 but only 6 bytes total (needs 8)
+        assert!(matches!(
+            deserialize_embedding(&[1, 0, 0, 0, 0, 0]),
+            Err(MemoError::Serialization(_))
+        ));
+        // shorter than the 4-byte header
+        assert!(matches!(
+            deserialize_embedding(&[1, 2, 3]),
+            Err(MemoError::Serialization(_))
+        ));
+    }
+
+    #[test]
+    fn semantic_search_ranks_by_cosine() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "rust systems programming", Some(vec![1.0, 0.0])))
+            .unwrap();
+        s.add(&mem("b", "banana smoothie recipe", Some(vec![0.0, 1.0])))
+            .unwrap();
+        let mut q = SearchQuery::new("x"); // keyword irrelevant (weight 0)
+        q.semantic_weight = 1.0;
+        q.keyword_weight = 0.0;
+        q.query_embedding = Some(vec![1.0, 0.0]);
+        let r = s.search(&q).unwrap();
+        assert_eq!(r[0].memo.id, "a");
+        assert!((r[0].score - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn zero_magnitude_embedding_scores_zero() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "x", Some(vec![0.0, 0.0]))).unwrap();
+        let mut q = SearchQuery::new("x");
+        q.semantic_weight = 1.0;
+        q.keyword_weight = 0.0;
+        q.query_embedding = Some(vec![0.0, 0.0]);
+        let r = s.search(&q).unwrap();
+        assert_eq!(r.len(), 1);
+        assert!(r[0].score.abs() < 1e-6);
+    }
+
+    #[test]
+    fn add_batch_success_persists_all() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add_batch(&[mem("a", "x", None), mem("b", "y", None)])
+            .unwrap();
+        assert_eq!(s.list(None).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn backend_kind_is_sqlite() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        assert_eq!(s.backend_kind(), "sqlite");
+    }
+
+    #[test]
+    fn invalid_metadata_json_errors_on_read() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO memories (id, memo_type, content, embedding, metadata, importance, version, created_at, updated_at, deleted) \
+                 VALUES ('x','working','c',X'', 'not json', 0.5, 1, 0, 0, 0)",
+                [],
+            )
+            .unwrap();
+        let r = s.get(&"x".into());
+        assert!(matches!(r, Err(MemoError::Serialization(_))));
+    }
 }

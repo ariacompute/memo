@@ -324,4 +324,22 @@ mod tests {
         let m = mgr();
         assert!(bench(&m, 0, 5, 0).is_err());
     }
+
+    #[test]
+    fn cli_bench_rejects_zero_topk() {
+        let m = mgr();
+        assert!(bench(&m, 5, 0, 0).is_err());
+    }
+
+    #[test]
+    fn cli_get_not_found_and_search_empty() {
+        let m = mgr();
+        assert_eq!(get(&m, "ghost").unwrap(), "not found");
+        // No memories -> search/recall return empty strings (not errors)
+        assert_eq!(search(&m, "anything", 5, false).unwrap(), "");
+        assert_eq!(recall(&m, "anything", 5, false).unwrap(), "");
+        let arr: serde_json::Value =
+            serde_json::from_str(&search(&m, "anything", 5, true).unwrap()).unwrap();
+        assert!(arr.is_array() && arr.as_array().unwrap().is_empty());
+    }
 }

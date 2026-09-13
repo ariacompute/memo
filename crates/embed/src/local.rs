@@ -124,4 +124,26 @@ mod tests {
         assert!(matches!(e.embed("   "), Err(MemoError::EmptyEmbedding)));
         assert!(matches!(e.embed("!!! ???"), Err(MemoError::EmptyEmbedding)));
     }
+
+    #[test]
+    fn tokenize_makes_unigrams_and_bigrams() {
+        let toks = tokenize("hello world");
+        assert!(toks.contains(&"hello".to_string()));
+        assert!(toks.contains(&"world".to_string()));
+        // word 2-gram
+        assert!(toks.contains(&"hello world".to_string()));
+        // CJK falls back to character 2-grams
+        let cjk = tokenize("用户");
+        assert!(cjk.iter().any(|t| t.chars().count() == 2));
+    }
+
+    #[test]
+    fn hash_dim_in_range_and_deterministic() {
+        let a = hash_dim("rust", 64);
+        let b = hash_dim("rust", 64);
+        assert_eq!(a, b);
+        assert!(a < 64);
+        // dim 1 always maps to index 0
+        assert_eq!(hash_dim("rust", 1), 0);
+    }
 }

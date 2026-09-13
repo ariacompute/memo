@@ -364,4 +364,33 @@ mod tests {
         q.top_k = 0;
         assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
     }
+
+    #[test]
+    fn memo_patch_is_empty() {
+        assert!(MemoPatch::default().is_empty());
+        assert!(
+            !MemoPatch {
+                content: Some("x".into()),
+                ..Default::default()
+            }
+            .is_empty()
+        );
+        assert!(
+            !MemoPatch {
+                importance: Some(0.5),
+                ..Default::default()
+            }
+            .is_empty()
+        );
+    }
+
+    #[test]
+    fn keyword_score_partial_and_zero() {
+        // Two query words, only one present -> 0.5
+        assert_eq!(keyword_score("hello world", "hello rust"), 0.5);
+        // No overlapping words -> 0
+        assert_eq!(keyword_score("apple pie", "rust go"), 0.0);
+        // Empty content + non-empty query -> 0
+        assert_eq!(keyword_score("", "x"), 0.0);
+    }
 }

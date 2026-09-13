@@ -51,4 +51,11 @@ mod tests {
     fn empty_errors() {
         assert!(matches!(cosine(&[], &[1.0]), Err(MemoError::EmptyEmbedding)));
     }
+
+    #[test]
+    fn zero_magnitude_returns_zero() {
+        // Either vector with zero norm has no direction -> defined as 0.0
+        assert!(matches!(cosine(&[0.0, 0.0], &[1.0, 0.0]), Ok(0.0)));
+        assert!(matches!(cosine(&[1.0, 0.0], &[0.0, 0.0]), Ok(0.0)));
+    }
 }

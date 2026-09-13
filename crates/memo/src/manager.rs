@@ -303,4 +303,110 @@ mod tests {
         assert_eq!(removed, 1);
         assert_eq!(m.list(None).unwrap().len(), 1);
     }
+
+    #[test]
+    fn update_type_only_bumps_version() {
+        let m = mgr();
+        let id = m.add("plain content", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        m.update(
+            &id,
+            MemoPatch {
+                memo_type: Some(MemoType::ShortTerm),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let got = m.get(&id).unwrap().unwrap();
+        assert_eq!(got.memo_type, MemoType::ShortTerm);
+        assert_eq!(got.version, 2);
+        assert_eq!(got.content, "plain content");
+    }
+
+    #[test]
+    fn update_importance_only() {
+        let m = mgr();
+        let id = m.add("c", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        m.update(
+            &id,
+            MemoPatch {
+                importance: Some(0.2),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!((m.get(&id).unwrap().unwrap().importance - 0.2).abs() < 1e-6);
+    }
+
+    #[test]
+    fn update_empty_content_and_importance_range_errors() {
+        let m = mgr();
+        let id = m.add("c", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        assert!(matches!(
+            m.update(
+                &id,
+                MemoPatch {
+                    content: Some("   ".into()),
+                    ..Default::default()
+                }
+            ),
+            Err(MemoError::EmptyContent)
+        ));
+        assert!(matches!(
+            m.update(
+                &id,
+                MemoPatch {
+                    importance: Some(1.5),
+                    ..Default::default()
+                }
+            ),
+            Err(MemoError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
+    fn search_and_recall_reject_invalid_query() {
+        let m = mgr();
+        m.add("x", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        // empty text -> validation error before embedding
+        assert!(matches!(m.search(SearchQuery::new("")), Err(MemoError::InvalidParam(_))));
+        assert!(matches!(m.recall(RecallQuery::new("")), Err(MemoError::InvalidParam(_))));
+    }
+
+    #[test]
+    fn recall_with_provided_embedding_skips_embedder() {
+        let m = mgr();
+        let id = m.add("user prefers rust", MemoType::Working, HashMap::new(), 0.8).unwrap();
+        let mut q = RecallQuery::new("rust");
+        q.query_embedding = Some(vec![1.0, 0.0, 0.0]); // injected; embedder must NOT be called
+        let rs = m.recall(q).unwrap();
+        assert!(rs.iter().any(|r| r.memo.id == id));
+    }
+
+    #[test]
+    fn dedup_invalid_threshold_and_noop() {
+        let m = mgr();
+        assert!(matches!(m.dedup(2.0), Err(MemoError::InvalidParam(_))));
+        m.add("unique one", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        m.add("unique two", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        // dissimilar -> nothing merged
+        assert_eq!(m.dedup(0.99).unwrap(), 0);
+        assert_eq!(m.list(None).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn consolidate_missing_id_is_not_found() {
+        let m = mgr();
+        assert!(matches!(
+            m.consolidate(&"missing".to_string(), 0.1),
+            Err(MemoError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn with_sqlite_builds_in_memory() {
+        let e: Arc<dyn Embedder> = Arc::new(LocalEmbedder::new(64));
+        let m = MemoManager::with_sqlite(e, ":memory:").unwrap();
+        let id = m.add("probe", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        assert!(m.get(&id).unwrap().is_some());
+    }
 }

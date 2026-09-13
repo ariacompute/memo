@@ -67,4 +67,33 @@ mod tests {
         assert!(s.get(&"a".into()).unwrap().is_none());
         assert!(s.get(&"b".into()).unwrap().is_some());
     }
+
+    #[test]
+    fn decay_reduces_and_skips_invalid() {
+        let mut m = sample("a", 1.0);
+        // a quarter-life of elapsed -> factor 0.5^0.5 ≈ 0.707
+        decay_importance(&mut m, 100, 200);
+        assert!(
+            m.importance < 1.0 && m.importance > 0.5,
+            "importance={}",
+            m.importance
+        );
+        // non-positive half-life or elapsed -> no-op
+        let before = m.importance;
+        decay_importance(&mut m, 100, 0);
+        decay_importance(&mut m, -10, 100);
+        decay_importance(&mut m, 0, 100);
+        assert!((m.importance - before).abs() < 1e-9);
+    }
+
+    #[test]
+    fn prune_invalid_floor_and_noop() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        assert!(matches!(prune(&s, 2.0), Err(MemoError::InvalidParam(_))));
+        s.add(&sample("a", 0.9)).unwrap();
+        s.add(&sample("b", 0.9)).unwrap();
+        // floor below all importances -> nothing removed
+        assert_eq!(prune(&s, 0.5).unwrap(), 0);
+        assert_eq!(s.list(None).unwrap().len(), 2);
+    }
 }

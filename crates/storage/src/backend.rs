@@ -16,6 +16,18 @@ impl BackendKind {
     }
 }
 
+impl std::str::FromStr for BackendKind {
+    type Err = MemoError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "embedded" => Ok(BackendKind::Embedded),
+            "replicated" => Ok(BackendKind::Replicated),
+            _ => Err(MemoError::InvalidParam(format!("unknown backend kind: {s}"))),
+        }
+    }
+}
+
 /// Replicated/distributed backend placeholder (M1 only abstracts it, inspired by rqlite).
 /// A real implementation would replicate memories across edge nodes via Raft; deferred to a later milestone.
 pub struct ReplicatedBackend;
@@ -53,6 +65,7 @@ impl StorageBackend for ReplicatedBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::str::FromStr;
 
     #[test]
     fn replicated_backend_not_implemented() {
@@ -61,5 +74,13 @@ mod tests {
             ReplicatedBackend::new().backend_kind(),
             BackendKind::Replicated.as_str()
         );
+    }
+
+    #[test]
+    fn backend_kind_roundtrip() {
+        for k in [BackendKind::Embedded, BackendKind::Replicated] {
+            assert_eq!(BackendKind::from_str(k.as_str()).unwrap(), k);
+        }
+        assert!("bogus".parse::<BackendKind>().is_err());
     }
 }
