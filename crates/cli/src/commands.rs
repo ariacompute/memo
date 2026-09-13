@@ -1,5 +1,5 @@
 use memo::MemoManager;
-use memo_core::{MemoPatch, MemoType, Result, SearchQuery};
+use memo_core::{MemoPatch, MemoType, RecallQuery, Result, SearchQuery};
 use std::collections::HashMap;
 
 /// Add a memory and return its id. An unknown memo_type falls back to `working`
@@ -30,6 +30,33 @@ pub fn search(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) ->
     let mut q = SearchQuery::new(text);
     q.top_k = top_k;
     let rs = manager.search(q)?;
+    if as_json {
+        let arr: Vec<serde_json::Value> = rs
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "score": r.score,
+                    "id": r.memo.id,
+                    "memo_type": format!("{:?}", r.memo.memo_type),
+                    "content": r.memo.content,
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+    }
+    let lines: Vec<String> = rs
+        .iter()
+        .map(|r| format!("{:.3}\t{}", r.score, r.memo.content))
+        .collect();
+    Ok(lines.join("\n"))
+}
+
+/// Pure vector (semantic) recall. Returns memories ranked by cosine similarity
+/// to the query embedding (no keyword component). Output mirrors `search`.
+pub fn recall(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) -> Result<String> {
+    let mut q = RecallQuery::new(text);
+    q.top_k = top_k;
+    let rs = manager.recall(q)?;
     if as_json {
         let arr: Vec<serde_json::Value> = rs
             .iter()
@@ -214,6 +241,18 @@ mod tests {
         assert!(got.contains("user likes rust"));
         assert_eq!(forget(&m, &id).unwrap(), "forgotten");
         assert_eq!(forget(&m, &id).unwrap(), "not found");
+    }
+
+    #[test]
+    fn cli_recall_returns_semantic_match() {
+        let m = mgr();
+        let rust_id = add(&m, "working", "user prefers rust for systems programming", 0.8).unwrap();
+        add(&m, "working", "banana smoothie recipe with ice", 0.5).unwrap();
+        let out = recall(&m, "rust programming language", 5, false).unwrap();
+        assert!(out.contains("rust"));
+        let arr: serde_json::Value =
+            serde_json::from_str(&recall(&m, "rust programming language", 5, true).unwrap()).unwrap();
+        assert_eq!(arr[0]["id"], rust_id);
     }
 
     #[test]

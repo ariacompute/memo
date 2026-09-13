@@ -152,6 +152,45 @@ impl SearchQuery {
     }
 }
 
+/// A vector (semantic) recall query. Scoring is pure cosine similarity between
+/// the query embedding and stored memory embeddings — no keyword component —
+/// which is what distinguishes it from the hybrid [`SearchQuery`].
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RecallQuery {
+    pub text: String,
+    pub top_k: usize,
+    /// Minimum cosine similarity to keep a candidate.
+    pub score_threshold: f32,
+    pub memo_type: Option<MemoType>,
+    /// Precomputed query vector (injected by the Manager so the storage layer
+    /// does not need an embedder).
+    pub query_embedding: Option<Vec<f32>>,
+}
+
+impl RecallQuery {
+    /// Construct a query with sensible defaults.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            top_k: 10,
+            score_threshold: 0.0,
+            memo_type: None,
+            query_embedding: None,
+        }
+    }
+
+    /// Validate: rejects empty text and top_k=0.
+    pub fn validate(&self) -> Result<()> {
+        if self.text.trim().is_empty() {
+            return Err(MemoError::InvalidParam("empty recall text".into()));
+        }
+        if self.top_k == 0 {
+            return Err(MemoError::InvalidParam("top_k must be > 0".into()));
+        }
+        Ok(())
+    }
+}
+
 /// A search result with a score.
 #[derive(Debug, Clone)]
 pub struct ScoredMemo {
@@ -309,5 +348,20 @@ mod tests {
         let a = generate_id();
         let b = generate_id();
         assert_ne!(a, b);
+    }
+
+    #[test]
+    fn recall_query_defaults_and_validate() {
+        let q = RecallQuery::new("rust");
+        assert_eq!(q.top_k, 10);
+        assert!(q.validate().is_ok());
+        assert!(q.query_embedding.is_none());
+
+        let q = RecallQuery::new("");
+        assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
+
+        let mut q = RecallQuery::new("x");
+        q.top_k = 0;
+        assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
     }
 }

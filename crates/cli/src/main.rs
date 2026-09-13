@@ -44,6 +44,16 @@ enum Command {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Pure vector (semantic) recall — cosine similarity only
+    Recall {
+        #[arg(long)]
+        text: String,
+        #[arg(long, default_value_t = 5)]
+        top_k: usize,
+        /// Machine-readable JSON output (id/score/content); default is score\tcontent
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// List memories
     List {
         #[arg(long)]
@@ -122,6 +132,9 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 Command::Search { text, top_k, json } => {
                     println!("{}", commands::search(&manager, &text, top_k, json)?);
+                }
+                Command::Recall { text, top_k, json } => {
+                    println!("{}", commands::recall(&manager, &text, top_k, json)?);
                 }
                 Command::List { r#type, json } => {
                     println!("{}", commands::list(&manager, r#type.as_deref(), json)?);

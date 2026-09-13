@@ -57,6 +57,27 @@ impl MemoManager {
         self.store.get(id)
     }
 
+    /// Pure vector (semantic) recall: embed the query text and rank stored
+    /// memories by cosine similarity only — no keyword component. This is the
+    /// dedicated "向量召回" entrypoint, distinct from the hybrid [`search`].
+    pub fn recall(&self, mut query: RecallQuery) -> Result<Vec<ScoredMemo>> {
+        query.validate()?;
+        if query.query_embedding.is_none() {
+            let emb = self.embedder.embed(&query.text)?;
+            query.query_embedding = Some(emb);
+        }
+        // Delegate to the storage layer as a semantic-only search
+        // (semantic_weight=1, keyword_weight=0).
+        let mut sq = SearchQuery::new(query.text.clone());
+        sq.top_k = query.top_k;
+        sq.score_threshold = query.score_threshold;
+        sq.memo_type = query.memo_type.clone();
+        sq.semantic_weight = 1.0;
+        sq.keyword_weight = 0.0;
+        sq.query_embedding = query.query_embedding;
+        self.store.search(&sq)
+    }
+
     /// Update a memory; recomputes the embedding and bumps the version when content changes.
     pub fn update(&self, id: &MemoId, patch: MemoPatch) -> Result<()> {
         if patch.is_empty() {
@@ -187,6 +208,22 @@ mod tests {
         let got = m.get(&id).unwrap().unwrap();
         assert!(got.content.contains("rust"));
         assert!(got.embedding.is_some());
+    }
+
+    #[test]
+    fn vector_recall_ranks_similar() {
+        let m = mgr();
+        let rust = m
+            .add("user prefers rust for systems programming", MemoType::Working, HashMap::new(), 0.8)
+            .unwrap();
+        m.add("banana smoothie recipe with ice", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
+        let rs = m.recall(RecallQuery::new("rust programming language")).unwrap();
+        assert!(!rs.is_empty());
+        // The semantically similar rust memory must rank first.
+        assert_eq!(rs[0].memo.id, rust);
+        // Score is pure cosine similarity in [0, 1].
+        assert!((0.0..=1.0).contains(&rs[0].score));
     }
 
     #[test]
