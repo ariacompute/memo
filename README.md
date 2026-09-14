@@ -25,6 +25,30 @@ cargo run -p aria-memo -- add --type working --content "User likes Rust" --impor
 cargo run -p aria-memo -- search --text "Rust" --top-k 5
 ```
 
+## CLI & Self-Management
+
+`aria-memo` ships two self-management commands (mirroring `aria-router`):
+
+- `aria-memo setup` — persist the CLI config to `~/.ariacompute/memo-cli.yml`
+  (the `upgrade_url` Releases org root). Interactive runs prompt you to pick
+  **GitHub** (`https://github.com/ariacompute`, default) or **Gitee**
+  (`https://gitee.com/ariacompute`). Non-interactive runs honor
+  `ARIA_MEMO_SITE=cn` (→ Gitee), fall back to any existing config, then to GitHub.
+  - `aria-memo setup --status` — print the config path and `upgrade_url`.
+  - `aria-memo setup --clear` — delete the config file.
+- `aria-memo upgrade [version]` — replace the running binary with the latest
+  stable release (or a specific `version` tag) from GitHub/Gitee Releases.
+  - `aria-memo upgrade --url <URL>` — override `upgrade_url` from config for this run.
+  - The resolved `upgrade_url` precedence is:
+    `--url` > `~/.ariacompute/memo-cli.yml` > `ARIA_MEMO_UPGRADE_URL` env > built-in
+    default (`https://github.com/ariacompute`).
+  - Release assets follow `aria-memo_{ver}_{os}.tar.gz`
+    (`os` ∈ `linux_x86_64`/`linux_arm64`/`macos`/`windows_x86_64`; `.zip` on Windows).
+
+`aria-memo --version` / `-v` prints the build version.
+
+> The home directory `~/.ariacompute` is overridable via `ARIA_COMPUTE_HOME`.
+
 ## Benchmarks & Comparison
 
 Compare against: mem0 / MemOS / MemPalace / Zep / Letta.

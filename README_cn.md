@@ -23,6 +23,29 @@ cargo run -p aria-memo -- add --type working --content "用户喜欢 Rust" --imp
 cargo run -p aria-memo -- search --text "Rust" --top-k 5
 ```
 
+## CLI 与自管理
+
+`aria-memo` 内置两个自管理命令（对齐 `aria-router`）：
+
+- `aria-memo setup` — 将 CLI 配置持久化到 `~/.ariacompute/memo-cli.yml`
+  （`upgrade_url`，即 Releases 组织根）。交互运行时会提示选择 **GitHub**
+  （`https://github.com/ariacompute`，默认）或 **Gitee**
+  （`https://gitee.com/ariacompute`）。非交互运行时遵循 `ARIA_MEMO_SITE=cn`
+  （→ Gitee），否则沿用已有配置，最后回落到 GitHub 默认。
+  - `aria-memo setup --status` — 打印配置路径与 `upgrade_url`。
+  - `aria-memo setup --clear` — 删除配置文件。
+- `aria-memo upgrade [version]` — 从 GitHub/Gitee Releases 下载并原地替换当前
+  二进制（不传版本升级到最新稳定版，传 `version` 升级到指定 tag）。
+  - `aria-memo upgrade --url <URL>` — 本次运行覆盖配置中的 `upgrade_url`。
+  - `upgrade_url` 解析优先级：`--url` > `~/.ariacompute/memo-cli.yml`(优先读取)
+    > `ARIA_MEMO_UPGRADE_URL` 环境变量 > 内置默认（`https://github.com/ariacompute`）。
+  - Release 资产命名约定：`aria-memo_{ver}_{os}.tar.gz`
+    （`os` ∈ `linux_x86_64`/`linux_arm64`/`macos`/`windows_x86_64`，Windows 为 `.zip`）。
+
+`aria-memo --version` / `-v` 打印构建版本。
+
+> home 目录 `~/.ariacompute` 可由 `ARIA_COMPUTE_HOME` 覆盖。
+
 ## 对比评测
 
 对比系统：mem0 / MemOS / MemPalace / Zep / Letta。
