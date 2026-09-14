@@ -1,16 +1,31 @@
 //! aria-memo: on-device long-term memory storage command-line entry point.
 mod commands;
+mod config;
+mod setup;
+mod upgrade;
 
-use clap::{Parser, Subcommand};
+use crate::setup::SetupArgs;
+
+use clap::{ArgAction, Parser, Subcommand};
 use memo::MemoManager;
 use memo_core::{Embedder, Result};
 use memo_embed::LocalEmbedder;
 use memo_storage::SqliteStore;
 use std::sync::Arc;
 
+const MEMO_VERSION: &str = env!("ARIA_MEMO_VERSION");
+
 #[derive(Parser)]
-#[command(name = "memo", about = "On-device long-term memory storage CLI")]
+#[command(
+    name = "memo",
+    about = "On-device long-term memory storage CLI",
+    version = MEMO_VERSION,
+    disable_version_flag = true
+)]
 struct Cli {
+    /// Print version
+    #[arg(short = 'v', long = "version", action = ArgAction::Version)]
+    _version: (),
     /// Database path, defaults to ./memo.db
     #[arg(long, default_value = "memo.db")]
     db: String,
@@ -91,6 +106,18 @@ enum Command {
         #[arg(long, default_value_t = true)]
         json: bool,
     },
+    /// Write CLI config (~/.ariacompute/memo-cli.yml)
+    Setup(Box<SetupArgs>),
+    /// Replace this CLI from Releases
+    Upgrade {
+        /// Target version (default: latest stable)
+        version: Option<String>,
+        /// Override the upgrade_url from config
+        #[arg(long = "url")]
+        url: Option<String>,
+    },
+    /// Print version
+    Version,
 }
 
 fn build_manager(db: &str) -> MemoManager {
@@ -101,6 +128,11 @@ fn build_manager(db: &str) -> MemoManager {
 
 fn run(cli: Cli) -> Result<()> {
     match cli.command {
+        Command::Setup(args) => setup::run(*args)?,
+        Command::Upgrade { version, url } => {
+            upgrade::run(version.as_deref(), MEMO_VERSION, url.as_deref())?
+        }
+        Command::Version => println!("aria-memo {MEMO_VERSION}"),
         Command::Bench {
             size,
             top_k,
@@ -152,6 +184,8 @@ fn run(cli: Cli) -> Result<()> {
                     println!("{}", commands::forget(&manager, &id)?);
                 }
                 Command::Bench { .. } => unreachable!(),
+                // Already handled above; silence exhaustiveness.
+                Command::Setup(_) | Command::Upgrade { .. } | Command::Version => unreachable!(),
             }
         }
     }

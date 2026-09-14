@@ -14,4 +14,11 @@ memo-core.workspace = true
 memo-embed.workspace = true
 memo-storage.workspace = true
 clap.workspace = true
+serde.workspace = true
 serde_json.workspace = true
+serde_yaml = "0.9"
+dirs = "5"
+reqwest = { version = "0.12", default-features = false, features = ["blocking", "rustls-tls", "json"] }
+tar = "0.4"
+flate2 = "1"
+zip = "2"

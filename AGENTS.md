@@ -14,7 +14,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - crates/storage：rusqlite 后端（建表/迁移/索引/CRUD/批量写入）+ 复制后端占位
 - crates/embed：ngram+哈希/TF-IDF 向量 embedder + 余弦相似度
 - crates/memo：manager(增删改查/检索(search 混合 + recall 纯向量)/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘)
-- crates/cli：add/get/search/list/forget/update/bench/serve（list/search 支持 `--json` 机器可读输出）
+- crates/cli：`add/get/search/recall/list/update/forget/bench` + 自管理 `setup`(`--status`/`--clear`，交互选择 GitHub/Gitee 升级源) 与 `upgrade [version]`(`--url` 可选覆盖) ；`--version`/`-v` 打印版本（list/search 支持 `--json` 机器可读输出）
 - benches/：Python 评测编排（Track A 微基准+合成检索；Track B 四基准 locomo_refined/halumem/longmemeval/personamem）
 - docs/：compare.md 功能矩阵、bench_results.md 结果说明
 - 根：AGENTS.md / requirements.md / task.md / README.md
@@ -40,6 +40,8 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - 黄金路径：add → embed → 持久化 → search/recall → retrieve 端到端单测。
 - 异常路径（重复 id、缺失、空内容、空嵌入、非法参数（importance 越界 / top_k=0 / query 文本空）、损坏/非法 metadata DB、recall/search 拒绝非法 query）须有单测。
 - 复制/分布式后端仅抽象，后续里程碑。
+- 自管理：`aria-memo setup` 持久化 CLI 配置到 `~/.ariacompute/memo-cli.yml`（`upgrade_url` = Releases 组织根，默认 `https://github.com/ariacompute`；交互时可选择 GitHub `https://github.com/ariacompute` 或 Gitee `https://gitee.com/ariacompute`；home 可由 `ARIA_COMPUTE_HOME` 覆盖，`cn` 站点经 `ARIA_MEMO_SITE=cn` 默认 Gitee，`--clear` 删除配置）。`aria-memo upgrade [version]` 从 GitHub/Gitee Releases 下载当前平台二进制并原地替换；`upgrade_url` 优先级 `--url` > `memo-cli.yml`(优先读取) > `ARIA_MEMO_UPGRADE_URL` > 内置默认（`https://github.com/ariacompute`）。
+- Release 资产命名约定：`aria-memo_{ver}_{os}.tar.gz`（`os` ∈ `linux_x86_64`/`linux_arm64`/`macos`/`windows_x86_64`，Windows 为 `.zip`）；CI 须按此命名，升级链路才闭环（参考 router `bin/src/upgrade.rs`）。
 - Track B 离线指标（F1/BLEU/多选/Recall@k）零网络可出；judge 指标依赖 OpenAI 兼容 LLM（BENCH_LLM_API_KEY），缺则 skip 并写 reason，不伪造分数。
 - `data/fixtures/<bench>/` 为内置合成样例（仅供单测/冒烟），报告标注 `dataset_source: fixture`，不可与正式基准分数直接对比。
 - requirements.md 须经人工逐项审核后方可据其生成 task.md。
