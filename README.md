@@ -88,6 +88,14 @@ The default `LocalRelationScorer` is fully local (semantic = cosine, temporal = 
 order, entity = token Jaccard, causal = time-adjacency + overlap). Swap in an
 LLM-backed scorer without touching the controller.
 
+**Offline retrieval quality.** The flat `search` path is a hybrid of a local semantic
+score (cosine over the hashing embedder) and a dependency-free lexical score
+(`lexical_relevance`: rarity-weighted term overlap plus an exact-phrase bonus, with
+CJK character 2-grams). Because the bundled embedder is a lightweight hash/TF-IDF
+vectorizer — no heavy ML — the semantic signal is intentionally weak; `lexical_relevance`
+maximizes the keyword contribution so offline recall stays useful. Tune
+`SearchQuery.keyword_weight` (default `0.3`) to shift the balance.
+
 ## Benchmarks & Comparison
 
 Compare against: mem0 / MemOS / MemPalace / Zep / Letta.

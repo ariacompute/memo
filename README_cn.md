@@ -78,6 +78,11 @@ cargo run -p aria-memo -- search --text "Rust" --graph
 
 默认 `LocalRelationScorer` 完全本地（semantic = 余弦，temporal = 时间序，entity = token Jaccard，causal = 时间邻 + 重叠）。可换 LLM 实现而不动控制器。
 
+**离线检索质量。** 扁平 `search` 走混合检索：本地语义分（哈希嵌入的余弦）+ 零依赖的词法分
+（`lexical_relevance`：按稀有度加权的词项重叠 + 精确短语奖励，并含 CJK 字符 2-gram）。由于内置
+嵌入器是轻量 hash/TF-IDF 向量器（不引入重型 ML），语义信号刻意偏弱；`lexical_relevance` 最大化
+关键词贡献，使离线召回仍可用。可用 `SearchQuery.keyword_weight`（默认 `0.3`）调节平衡。
+
 ## 对比评测
 
 对比系统：mem0 / MemOS / MemPalace / Zep / Letta。
