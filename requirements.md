@@ -32,6 +32,17 @@ Track B 收敛为四个业界基准，移除早期骨架中的 `beam` 与旧 `lo
 
 **judge 可选红线**：所有依赖 LLM 判定的指标仅在配置了 OpenAI 兼容凭据（`BENCH_LLM_API_KEY` 等）时计算，否则该指标 `skipped` 并写 `reason`；不伪造分数。离线指标（F1/BLEU/多选/Recall@k）在无数据集/无 LLM 时仍可经 fixture 跑通。
 
+### 1.3 范围内（M4，多关系记忆平面）
+
+Jev-Mem 启发的结构化多关系记忆层，叠加在扁平 `MemoStore` 之上；零网络依赖、默认离线（可插拔 LLM scorer）。
+
+- 四视图有向关系边：`semantic`（语义关联）/ `temporal`（时间序或共现）/ `causal`（因果链）/ `entity`（同一实体聚合）。每条边带 `score ∈ [0,1]` 与 `provenance`（如 `local` 或 `llm:causal`）。
+- 关系存于独立 `relations` 表，**绝不改动 `Memo`**；`Memo` 模型与既有扁平检索（search/recall）保持不变，作为图检索的回退。
+- 写路径：`add` 持久化记忆后由 `MemoryController::connect` 推断并持久化四视图边（write→connect 顺序）。
+- 读路径：`retrieve` 走「hybrid search 选种子锚点 → 跨 views 有界图扩展 → 打分」；返回 `GraphRetrieveResult`（打分记忆 + 可检视 `RetrieveTrace`），对齐 Jev-Mem 的 Retrieve→Assess→Expand 与透明决策。
+- `RelationScorer` 可插拔：默认 `LocalRelationScorer` 纯本地启发式（semantic=cosine / temporal=时间序 / entity=token Jaccard / causal=时间邻+重叠）；可换 LLM 实现而不动控制器。
+- 范围外（M4）：LLM 抽取/摘要、跨会话/跨用户全局图、云端协同图（属后续里程碑）。
+
 ## 2. API
 
 ### 2.1 数据模型（memo-core）
@@ -105,6 +116,75 @@ pub struct RecallQuery {
 - `memo forget --id <id>`
 - `memo bench --size N --top-k K --warmup W --json`（M2：进程内微基准 JSON）
 
+### 2.5 关系模型（memo-core）
+
+```rust
+/// 四视图关系边类型；每条边恰有一个 kind。
+pub enum RelationKind { Semantic, Temporal, Causal, Entity }
+
+/// 两记忆间的有向关系边，存于独立表，绝不改动 Memo。
+pub struct Relation {
+    pub from_id: MemoId,
+    pub to_id: MemoId,
+    pub kind: RelationKind,
+    pub score: f32,         // 边置信度 [0,1]
+    pub provenance: String, // 如 "local" / "llm:causal"
+    pub created_at: i64,    // unix 秒
+}
+// Relation::validate()：自环 / score 越界 / 空 provenance -> InvalidParam
+
+/// 有界图检索查询（对齐 Jev-Mem Retrieve->Assess->Expand）。
+pub struct GraphRetrieveQuery {
+    pub seeds: Vec<MemoId>,
+    pub views: Vec<RelationKind>, // 空 = 四视图全开
+    pub budget: usize,            // 访问节点上限，默认 60
+    pub max_hops: usize,          // 最大遍历深度，默认 3
+    pub top_k: usize,             // 返回条数，默认 20
+}
+// GraphRetrieveQuery::validate()：seeds 空 / budget=0 / max_hops=0 / top_k=0 -> InvalidParam
+
+/// 随图检索返回的可检视决策轨迹（透明决策）。
+pub struct RetrieveTrace {
+    pub views: Vec<RelationKind>,
+    pub budget: usize,
+    pub stop_reason: String,
+    pub hits: usize,
+}
+pub struct GraphRetrieveResult { pub items: Vec<ScoredMemo>, pub trace: RetrieveTrace }
+
+/// 共享有界图遍历（BFS + 去环）：neighbor_fn 返回 (to_id, score, kind)；
+/// 调用方按 views 过滤、budget 封顶、0.9/hop 衰减；返回 (id, score) 与可读 stop_reason。
+pub fn graph_bfs(
+    seeds: &[MemoId],
+    views: &[RelationKind],
+    budget: usize,
+    max_hops: usize,
+    neighbor_fn: impl FnMut(&MemoId) -> Vec<(MemoId, f32, RelationKind)>,
+) -> (Vec<(MemoId, f32)>, String);
+```
+
+### 2.6 trait 扩展（memo-core，`MemoStore`）
+
+- `add_relation(&Relation) -> Result<()>`：自环/非法边 → `InvalidParam`；任一端点记忆缺失 → `NotFound`。
+- `get_relations(from: Option<&MemoId>, to: Option<&MemoId>, kind: Option<RelationKind>, top_k: usize) -> Result<Vec<Relation>>`：按 `from`/`to`/`kind` 过滤，`top_k` 截断（最旧跳过）。
+- `delete_relations(from: Option<&MemoId>, to: Option<&MemoId>, kind: Option<RelationKind>) -> Result<usize>`：返回删除条数；`from`/`to`/`kind` 至少其一，否则 `InvalidParam`。
+- `expand(&GraphRetrieveQuery) -> Result<GraphRetrieveResult>`：有界图扩展（各后端复用 §2.5 `graph_bfs`）。
+
+### 2.7 MemoryController 公共 API（memo crate）
+
+- `with_defaults(embedder: Arc<dyn Embedder>, store: Arc<dyn MemoStore>) -> Self`：默认 `LocalRelationScorer` + `RelationConfig::default()`。
+- `new(embedder, store, scorer: Arc<dyn RelationScorer>, cfg: RelationConfig) -> Self`：可注入自定义 scorer / config。
+- `connect(&Memo) -> Result<usize>`：记忆须已持久化（write→connect 顺序），否则 `NotFound`；推断四视图边并持久化高于阈值的边，返回建边数。对称视图（semantic/entity/causal）双向建边，`temporal` 仅按时间序单向。
+- `retrieve(text, views, budget, max_hops, top_k) -> Result<GraphRetrieveResult>`：hybrid search 选种子锚点 → 跨 `views` 有界扩展 → 打分 + 可检视 `RetrieveTrace`。`budget`/`max_hops`/`top_k` 为 0 时 `InvalidParam`。
+
+### 2.8 CLI（关系平面子命令）
+
+- `memo connect --id <id>`：对已存记忆推断四视图边，打印建边数。
+- `memo relate --from <id> --to <id> --kind <semantic|temporal|causal|entity> [--score 0.8] [--provenance local]`：手动建边（自环/未知 kind/越界 score 走 `MemoError`）。
+- `memo relations [--from <id>] [--to <id>] [--kind <kind>] [--top-k 50] [--json]`：列边（JSON 含 from/to/kind/score/provenance）。
+- `memo graph --text "..." [--views semantic,entity] [--budget 60] [--max-hops 3] [--top-k 20] [--json]`：有界多关系遍历；`--json` 输出含 `trace`。
+- `memo search --text "..." --top-k 5 --graph`：等价开启图感知检索（`graph` 标志；默认四视图全开、budget 60 / max_hops 3）。
+
 ## 3. 表结构（SQLite）
 
 `memories` 表：
@@ -123,6 +203,20 @@ pub struct RecallQuery {
 
 索引：`idx_memories_type`、`idx_memories_updated_at`、`idx_memories_deleted`。
 
+`relations` 表（M4，独立边表，不改动 `memories`）：
+
+| 列 | 类型 | 约束 |
+|----|------|------|
+| from_id | TEXT | NOT NULL（PRIMARY KEY 一部分） |
+| to_id | TEXT | NOT NULL（PRIMARY KEY 一部分） |
+| kind | TEXT | NOT NULL（`semantic`/`temporal`/`causal`/`entity`，PRIMARY KEY 一部分） |
+| score | REAL | NOT NULL，[0,1] |
+| provenance | TEXT | NOT NULL |
+| created_at | INTEGER | NOT NULL，unix 秒 |
+
+主键：`(from_id, to_id, kind)`（同一方向同种边唯一；对称视图双向各一条）。
+索引：`idx_relations_from`（from_id, kind）、`idx_relations_to`（to_id）。
+
 ## 4. 异常（MemoError，thiserror）
 
 - `Io(#[from] std::io::Error)`：IO 失败。
@@ -135,6 +229,7 @@ pub struct RecallQuery {
 - `Serialization(String)`：JSON/向量序列化失败。
 - `Embedding(String)`：嵌入计算失败。
 - `Other(String)`：兜底。
+- 关系平面（M4）复用上述变体：`add_relation`/`connect` 遇自环、score 越界（非 [0,1]）、空 provenance → `InvalidParam`；端点记忆缺失 → `NotFound`。`delete_relations`/`GraphRetrieveQuery`/`MemoryController::retrieve` 在缺过滤条件或 `budget`/`max_hops`/`top_k`/`seeds` 为 0 / 空时 → `InvalidParam`。未知 `relation_kind` 字符串 → `InvalidParam`。
 
 所有路径禁止静默失败；每条异常路径须有单测覆盖。
 
@@ -146,6 +241,20 @@ pub struct RecallQuery {
 - 黄金路径单测：`add → search → get` 端到端跑通。
 - 异常单测：重复 id、缺失、空内容、空嵌入、非法参数（importance 越界 / top_k=0 / query 文本空）、损坏/非法 metadata DB、recall/search 拒绝非法 query。
 - 覆盖率：核心逻辑（manager / search / recall / consolidate / dedup / lifecycle / storage / cli）均有正常 + 异常用例；纯向量召回 `recall` 与 `RecallQuery` 校验有单测。
+
+### 5.1 M4 验收标准（多关系记忆平面）
+
+- `cargo test` 全绿、`cargo clippy --all-targets` 无告警（含关系平面用例）。
+- 黄金路径单测：`add → connect` 推断四视图边 → `get_relations` 列边 → `graph`/`retrieve` 跨视图扩展返回打分记忆 + `RetrieveTrace` 端到端跑通。
+- 异常单测（须覆盖正常 + 异常）：
+  - `Relation::validate`：自环、score 越界（<0 / >1）、空 provenance。
+  - `GraphRetrieveQuery::validate`：seeds 空、budget=0、max_hops=0、top_k=0。
+  - `add_relation`：端点缺失 → `NotFound`；自环 → `InvalidParam`。
+  - `delete_relations`：from/to/kind 全空 → `InvalidParam`；按过滤正确删数。
+  - `expand`/`retrieve`：拒绝非法 query；budget 封顶生效、max_hops 生效、去环（不重复访问）、0.9/hop 衰减；views 空 = 四视图全开。
+  - `LocalRelationScorer`：四视图打分在 [0,1]（semantic=cosine / temporal=时间序 / entity=token Jaccard / causal=时间邻+重叠）。
+  - CLI：`relate` 拒未知 kind / 自环 / 越界 score；`relations`/`graph` 正常 + `--json` 形态；`connect` 对未存 id → `NotFound`；`search --graph` 等价图感知。
+- 回归：既有扁平 `search`/`recall`（纯向量）与 `Memo` 模型行为不变，作为图检索回退。
 
 ## 6. 业界对比与评测（M2）
 

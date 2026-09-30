@@ -2,7 +2,7 @@
 
 [English](README.md) | [中文](README_cn.md)
 
-Rust 实现的边缘/移动端本地优先（local-first）长期记忆存储，为 LLM Agent 提供记忆的增删改查、语义 + 关键词混合检索、巩固、去重与遗忘。零网络依赖、纯 Rust（不引入重型 ML 框架）。
+Rust 实现的边缘/移动端本地优先（local-first）长期记忆存储，为 LLM Agent 提供记忆的增删改查、语义 + 关键词混合检索、巩固、去重与遗忘。零网络依赖、纯 Rust（不引入重型 ML 框架）。还内置默认离线的多关系记忆平面（semantic/temporal/causal/entity 四视图）。
 
 参考：rqlite / turso（嵌入式持久化）、MemOS / mem0 / MemPalace（记忆管理）。
 
@@ -45,6 +45,38 @@ cargo run -p aria-memo -- search --text "Rust" --top-k 5
 `aria-memo --version` / `-v` 打印构建版本。
 
 > home 目录 `~/.ariacompute` 可由 `ARIA_COMPUTE_HOME` 覆盖。
+
+## 多关系记忆平面（Jev-Mem 启发）
+
+在扁平 `MemoStore` 之上构建的结构化多关系记忆层——零网络依赖、默认离线（可插拔 LLM `RelationScorer`）。
+
+四种关系视图以有向边连接记忆：
+
+- `semantic` — 语义关联（嵌入余弦）
+- `temporal` — 时间序 / 共现
+- `causal` — 因果链
+- `entity` — 同一实体聚合
+
+边存于独立的 `relations` 表，绝不改动 `Memo`。写入时 `connect` 推断四视图边；读取时 `retrieve` 先做混合检索选种子锚点，再跨视图做有界图扩展，返回打分记忆 + 可检视 `RetrieveTrace`（对齐 Jev-Mem 的 Retrieve→Assess→Expand 与透明决策）。
+
+```bash
+# 为已存记忆推断四视图边
+cargo run -p aria-memo -- connect --id <id>
+
+# 手动建边
+cargo run -p aria-memo -- relate --from <id> --to <id> --kind semantic --score 0.8
+
+# 列边（按 from / to / kind 过滤）
+cargo run -p aria-memo -- relations --kind semantic --json
+
+# 有界多关系遍历（views/budget/max-hops/top-k）
+cargo run -p aria-memo -- graph --text "Rust 系统编程" --views semantic,entity --top-k 20 --json
+
+# 或在普通 search 上开启图感知
+cargo run -p aria-memo -- search --text "Rust" --graph
+```
+
+默认 `LocalRelationScorer` 完全本地（semantic = 余弦，temporal = 时间序，entity = token Jaccard，causal = 时间邻 + 重叠）。可换 LLM 实现而不动控制器。
 
 ## 对比评测
 
@@ -133,7 +165,7 @@ python benches/run.py --track b --benchmarks halumem
 - `crates/core` — 数据模型、统一错误 `MemoError`、trait
 - `crates/embed` — 本地轻量 embedder（ngram + 哈希/TF-IDF 向量）+ 余弦相似度
 - `crates/storage` — rusqlite 嵌入式持久化后端
-- `crates/memo` — 记忆管理编排与生命周期
+- `crates/memo` — 记忆管理编排与生命周期（含多关系 `MemoryController` / `RelationScorer`）
 - `crates/cli` — 命令行入口
 - `benches/` — 业界对比评测
 - `docs/` — 功能矩阵与评测结果说明

@@ -1,6 +1,9 @@
-use memo::MemoManager;
-use memo_core::{MemoPatch, MemoType, RecallQuery, Result, SearchQuery};
+use memo::{MemoryController, MemoManager};
+use memo_core::{
+    MemoError, MemoPatch, MemoType, RecallQuery, Relation, RelationKind, Result, SearchQuery,
+};
 use std::collections::HashMap;
+use std::str::FromStr;
 
 /// Add a memory and return its id. An unknown memo_type falls back to `working`
 /// (type schema differences must not break the evaluation pipeline).
@@ -218,6 +221,155 @@ fn percentile(xs: &mut [f64], p: f64) -> f64 {
     xs[idx.min(xs.len() - 1)]
 }
 
+// ---------------------------------------------------------------------------
+// Multi-relational (Jev-Mem) CLI commands
+// ---------------------------------------------------------------------------
+
+fn parse_views(spec: &str) -> Result<Vec<RelationKind>> {
+    if spec.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    spec.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(<RelationKind as FromStr>::from_str)
+        .collect::<Result<Vec<_>>>()
+}
+
+/// Build a controller from a manager's embedder + store.
+fn controller(manager: &MemoManager) -> MemoryController {
+    MemoryController::with_defaults(manager.embedder(), manager.store())
+}
+
+/// Write→connect: infer four-view relations for an already-stored memory by id.
+pub fn connect(manager: &MemoManager, id: &str) -> Result<String> {
+    let m = manager
+        .get(&id.to_string())?
+        .ok_or_else(|| MemoError::NotFound(id.to_string()))?;
+    let ctrl = controller(manager);
+    let n = ctrl.connect(&m)?;
+    Ok(format!("connected {id}: {n} edge(s)"))
+}
+
+/// Manually add a relation edge between two memories.
+pub fn relate(
+    manager: &MemoManager,
+    from: &str,
+    to: &str,
+    kind: &str,
+    score: f32,
+    provenance: Option<&str>,
+) -> Result<String> {
+    if score < 0.0 || score > 1.0 {
+        return Err(MemoError::InvalidParam("score out of [0,1]".into()));
+    }
+    let k = <RelationKind as FromStr>::from_str(kind)?;
+    let rel = Relation {
+        from_id: from.to_string(),
+        to_id: to.to_string(),
+        kind: k,
+        score,
+        provenance: provenance.unwrap_or("cli").to_string(),
+        created_at: memo_core::now_secs(),
+    };
+    manager.store().add_relation(&rel)?;
+    Ok(format!(
+        "relation {}->{}:{} added (score {:.3})",
+        from, to, k.as_str(), score
+    ))
+}
+
+/// List relations, optionally filtered by from/to/kind.
+pub fn relations(
+    manager: &MemoManager,
+    from: Option<&str>,
+    to: Option<&str>,
+    kind: Option<&str>,
+    top_k: usize,
+    as_json: bool,
+) -> Result<String> {
+    let k = match kind {
+        Some(s) => Some(<RelationKind as FromStr>::from_str(s)?),
+        None => None,
+    };
+    let rels = manager.store().get_relations(
+        from.map(|s| s.to_string()).as_ref(),
+        to.map(|s| s.to_string()).as_ref(),
+        k,
+        top_k,
+    )?;
+    if as_json {
+        let arr: Vec<serde_json::Value> = rels
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "from_id": r.from_id,
+                    "to_id": r.to_id,
+                    "kind": r.kind.as_str(),
+                    "score": r.score,
+                    "provenance": r.provenance,
+                    "created_at": r.created_at,
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+    }
+    let lines: Vec<String> = rels
+        .iter()
+        .map(|r| {
+            format!(
+                "{}->{}:{} {:.3} [{}]",
+                r.from_id, r.to_id, r.kind.as_str(), r.score, r.provenance
+            )
+        })
+        .collect();
+    Ok(lines.join("\n"))
+}
+
+/// Retrieve→assess→expand: hybrid-seed a graph traversal and return scored
+/// memories plus an inspectable trace. `views` is a comma-separated spec
+/// (e.g. "semantic,entity"); empty means "all four views".
+pub fn graph_retrieve(
+    manager: &MemoManager,
+    text: &str,
+    views: &str,
+    budget: usize,
+    max_hops: usize,
+    top_k: usize,
+    as_json: bool,
+) -> Result<String> {
+    let views = parse_views(views)?;
+    let ctrl = controller(manager);
+    let res = ctrl.retrieve(text, views, budget, max_hops, top_k)?;
+    if as_json {
+        let items: Vec<serde_json::Value> = res
+            .items
+            .iter()
+            .map(|s| {
+                serde_json::json!({
+                    "score": s.score,
+                    "id": s.memo.id,
+                    "content": s.memo.content,
+                })
+            })
+            .collect();
+        let trace = serde_json::json!({
+            "views": res.trace.views.iter().map(|v| v.as_str()).collect::<Vec<_>>(),
+            "budget": res.trace.budget,
+            "stop_reason": res.trace.stop_reason,
+            "hits": res.trace.hits,
+        });
+        let out = serde_json::json!({ "items": items, "trace": trace });
+        return Ok(serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string()));
+    }
+    let lines: Vec<String> = res
+        .items
+        .iter()
+        .map(|s| format!("{:.3}\t{}", s.score, s.memo.content))
+        .collect();
+    Ok(lines.join("\n"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -341,5 +493,56 @@ mod tests {
         let arr: serde_json::Value =
             serde_json::from_str(&search(&m, "anything", 5, true).unwrap()).unwrap();
         assert!(arr.is_array() && arr.as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cli_relate_list_and_graph() {
+        let m = mgr();
+        let a = add(&m, "working", "user likes rust systems programming", 0.8).unwrap();
+        let b = add(&m, "working", "user likes rust language for systems", 0.8).unwrap();
+
+        // Manual relate.
+        let out = relate(&m, &a, &b, "semantic", 0.9, Some("cli")).unwrap();
+        assert!(out.contains("added"));
+
+        // List relations filtered by kind.
+        let json = relations(&m, None, None, Some("semantic"), 10, true).unwrap();
+        let arr: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(arr.as_array().unwrap().len(), 1);
+        assert_eq!(arr[0]["from_id"], a);
+
+        // Graph retrieval from text near b should reach a through the semantic edge.
+        let g = graph_retrieve(&m, "rust programming", "", 20, 3, 10, true).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&g).unwrap();
+        assert!(v["items"].as_array().unwrap().len() >= 2);
+        assert!(!v["trace"]["stop_reason"].as_str().unwrap().is_empty());
+        assert_eq!(v["trace"]["hits"].as_u64().unwrap(), 2);
+
+        // Invalid kind rejected.
+        assert!(relate(&m, &a, &b, "bogus", 0.9, None).is_err());
+        // Invalid score rejected.
+        assert!(relate(&m, &a, &b, "semantic", 1.5, None).is_err());
+    }
+
+    #[test]
+    fn cli_connect_infers_edges() {
+        let m = mgr();
+        let _a = add(&m, "working", "user prefers rust systems programming", 0.8).unwrap();
+        let b = add(&m, "working", "rust is used for systems programming by the user", 0.8).unwrap();
+        // connect on b should infer edges to a (semantic/entity).
+        let out = connect(&m, &b).unwrap();
+        assert!(out.contains("edge"));
+        let json = relations(&m, None, None, None, 50, true).unwrap();
+        let arr: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert!(arr.as_array().unwrap().len() >= 2);
+        // connect on missing id errors.
+        assert!(connect(&m, "ghost").is_err());
+    }
+
+    #[test]
+    fn cli_parse_views_helper() {
+        assert!(parse_views("").unwrap().is_empty());
+        assert_eq!(parse_views("semantic,temporal").unwrap().len(), 2);
+        assert!(parse_views("nonsense").is_err());
     }
 }

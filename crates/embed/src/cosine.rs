@@ -58,4 +58,25 @@ mod tests {
         assert!(matches!(cosine(&[0.0, 0.0], &[1.0, 0.0]), Ok(0.0)));
         assert!(matches!(cosine(&[1.0, 0.0], &[0.0, 0.0]), Ok(0.0)));
     }
+
+    #[test]
+    fn opposite_direction_is_negative() {
+        let a = vec![1.0, 0.0];
+        let b = vec![-1.0, 0.0];
+        let s = cosine(&a, &b).unwrap();
+        assert!(s < 0.0, "opposite vectors should be negative");
+        assert!((s + 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn scaling_does_not_change_cosine() {
+        // parallel non-unit vectors
+        let a = vec![2.0, 4.0];
+        let b = vec![1.0, 2.0];
+        assert!((cosine(&a, &b).unwrap() - 1.0).abs() < 1e-6);
+        // anti-parallel
+        let c = vec![3.0, -1.0];
+        let d = vec![6.0, -2.0];
+        assert!((cosine(&c, &d).unwrap() - 1.0).abs() < 1e-6);
+    }
 }

@@ -47,6 +47,19 @@
 27. [ ] 文档同步：`benches/README.md` / `data/README.md` / `docs/compare.md` / `docs/bench_results.md` / `AGENTS.md`
 28. [ ] 验收：`cargo test` + `cargo clippy --all-targets` 全绿；`python -m pytest benches/` 离线全绿；`run.py --bench locomo_refined --ingest-only` 等可跑
 
+## M4 — 多关系记忆平面（Jev-Mem 启发，已落地）
+
+> 需求：在扁平 `MemoStore` 之上叠加四视图有向关系边（semantic/temporal/causal/entity），local-first 离线默认，可插拔 LLM scorer；write→connect 推断边，retrieve→assess→expand 有界图遍历 + 可检视 `RetrieveTrace`。规格见 requirements.md §1.3 / §2.5–§2.8 / §3 / §4 / §5.1。
+
+29. [x] `memo-core` 模型：新增 `RelationKind`/`Relation`/`GraphRetrieveQuery`/`RetrieveTrace`/`GraphRetrieveResult` + `graph_bfs`（BFS + 去环，0.9/hop 衰减，budget 封顶）；`Relation::validate` 拒自环 / score 越界 / 空 provenance
+30. [x] `memo-core` trait：`MemoStore` 扩展 `add_relation`/`get_relations`/`delete_relations`/`expand`；in-memory 测试实现 + 单测（含 `expand` 拒绝非法 query）
+31. [x] `memo-storage`：新增独立 `relations` 表（PK `from_id`+`to_id`+`kind`）+ 索引（`idx_relations_from`/`idx_relations_to`）；关系 CRUD + 有界 BFS `expand` 实现
+32. [x] `memo`：`MemoryController` + `RelationScorer` trait（默认 `LocalRelationScorer` 离线：semantic=cosine / temporal=时间序 / entity=token Jaccard / causal=时间邻+重叠）；`connect`（write→connect，对称视图双向建边，temporal 单向）/ `retrieve`（hybrid 选种 → 跨 views 扩展 → 打分 + Trace）；`RelationConfig` 控制阈值 / 候选数 / 每写最大边数
+33. [x] `memo/lib`：re-export 新类型与 `MemoryController`
+34. [x] CLI：新增 `connect`/`relate`/`relations`/`graph` 子命令 + `search --graph`；`--json` 输出含 `trace`；`commands.rs`/`main.rs` 正常 + 异常单测
+35. [x] 单测覆盖（正常 + 异常）：自环 / score 越界 / 空 provenance、未知 kind、seeds 空 / budget=0 / max_hops=0 / top_k=0、端点缺失 `NotFound`、`delete` 过滤、`expand` budget/hops/去环/衰减、views 空全开、`LocalRelationScorer` ∈ [0,1]、CLI 拒非法；扁平 `search`/`recall` 回退不破坏
+36. [x] 验收：`cargo test` 全绿、`cargo clippy --all-targets` 无告警；提交 `feat(memory): add multi-relational memory plane (Jev-Mem inspired)`（`13ab4ec`）
+
 ## 验证
 
 ### M1
@@ -60,3 +73,10 @@
 - `cargo run -p aria-memo -- bench --size 100 --json` 输出合法 JSON。
 - `python benches/run.py --track a --size 100` 写出 `benches/results/`。
 - `python benches/run.py --track b --dry-run` 走通骨架；缺密钥 skip 并写原因。
+
+### M4
+- `cargo test` + `cargo clippy --all-targets` 全绿（含关系平面用例）。
+- 黄金路径：`add → connect` 推断四视图边 → `relations` 列边 → `graph`（或 `search --graph`）跨视图扩展返回打分记忆 + `trace`。
+- 异常路径：自环 / score 越界 / 空 provenance / 未知 kind / seeds 空 / budget=0 / max_hops=0 / top_k=0 / 端点缺失 `NotFound` / `delete` 过滤全空 `InvalidParam` 均有单测。
+- 回归：既有扁平 `search`/`recall` 与 `Memo` 模型行为不变。
+- 手动冒烟：`cargo run -p aria-memo -- connect --id <id>`、`relate --from .. --to .. --kind semantic`、`relations --json`、`graph --text "..." --json`。

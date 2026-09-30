@@ -58,6 +58,9 @@ enum Command {
         /// Machine-readable JSON output (id/score/content); default is score\tcontent
         #[arg(long, default_value_t = false)]
         json: bool,
+        /// Graph-aware retrieval: hybrid-seed a bounded traversal (all four views)
+        #[arg(long, default_value_t = false)]
+        graph: bool,
     },
     /// Pure vector (semantic) recall — cosine similarity only
     Recall {
@@ -92,6 +95,53 @@ enum Command {
     Forget {
         #[arg(long)]
         id: String,
+    },
+    /// Write→connect: infer four-view relations for an existing memory by id
+    Connect {
+        #[arg(long)]
+        id: String,
+    },
+    /// Manually add a relation edge between two memories
+    Relate {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: String,
+        #[arg(long)]
+        kind: String,
+        #[arg(long, default_value_t = 0.8)]
+        score: f32,
+        #[arg(long)]
+        provenance: Option<String>,
+    },
+    /// List relations (optionally filtered by from/to/kind)
+    Relations {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        kind: Option<String>,
+        #[arg(long, default_value_t = 50)]
+        top_k: usize,
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
+    /// Graph-aware retrieval: hybrid-seed a bounded multi-relational traversal
+    Graph {
+        #[arg(long)]
+        text: String,
+        /// Comma-separated views (semantic/temporal/causal/entity); empty = all
+        #[arg(long, default_value = "")]
+        views: String,
+        #[arg(long, default_value_t = 60)]
+        budget: usize,
+        #[arg(long, default_value_t = 3)]
+        max_hops: usize,
+        #[arg(long, default_value_t = 20)]
+        top_k: usize,
+        #[arg(long, default_value_t = false)]
+        json: bool,
     },
     /// In-process micro-benchmark (JSON), parsed by benches/
     Bench {
@@ -162,8 +212,15 @@ fn run(cli: Cli) -> Result<()> {
                 Command::Get { id } => {
                     println!("{}", commands::get(&manager, &id)?);
                 }
-                Command::Search { text, top_k, json } => {
-                    println!("{}", commands::search(&manager, &text, top_k, json)?);
+                Command::Search { text, top_k, json, graph } => {
+                    if graph {
+                        println!(
+                            "{}",
+                            commands::graph_retrieve(&manager, &text, "", 60, 3, top_k, json)?
+                        );
+                    } else {
+                        println!("{}", commands::search(&manager, &text, top_k, json)?);
+                    }
                 }
                 Command::Recall { text, top_k, json } => {
                     println!("{}", commands::recall(&manager, &text, top_k, json)?);
@@ -182,6 +239,53 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 Command::Forget { id } => {
                     println!("{}", commands::forget(&manager, &id)?);
+                }
+                Command::Connect { id } => {
+                    println!("{}", commands::connect(&manager, &id)?);
+                }
+                Command::Relate {
+                    from,
+                    to,
+                    kind,
+                    score,
+                    provenance,
+                } => {
+                    println!(
+                        "{}",
+                        commands::relate(&manager, &from, &to, &kind, score, provenance.as_deref())?
+                    );
+                }
+                Command::Relations {
+                    from,
+                    to,
+                    kind,
+                    top_k,
+                    json,
+                } => {
+                    println!(
+                        "{}",
+                        commands::relations(
+                            &manager,
+                            from.as_deref(),
+                            to.as_deref(),
+                            kind.as_deref(),
+                            top_k,
+                            json
+                        )?
+                    );
+                }
+                Command::Graph {
+                    text,
+                    views,
+                    budget,
+                    max_hops,
+                    top_k,
+                    json,
+                } => {
+                    println!(
+                        "{}",
+                        commands::graph_retrieve(&manager, &text, &views, budget, max_hops, top_k, json)?
+                    );
                 }
                 Command::Bench { .. } => unreachable!(),
                 // Already handled above; silence exhaustiveness.

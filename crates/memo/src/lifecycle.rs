@@ -96,4 +96,36 @@ mod tests {
         assert_eq!(prune(&s, 0.5).unwrap(), 0);
         assert_eq!(s.list(None).unwrap().len(), 2);
     }
+
+    #[test]
+    fn decay_never_negative_and_zero_stays_zero() {
+        // Already-zero importance never goes negative.
+        let mut m = sample("a", 0.0);
+        decay_importance(&mut m, 1_000_000, 1);
+        assert_eq!(m.importance, 0.0);
+        // Strong decay keeps importance within [0,1).
+        let mut m2 = sample("b", 1.0);
+        decay_importance(&mut m2, 1_000_000, 1);
+        assert!(m2.importance >= 0.0 && m2.importance < 1.0);
+    }
+
+    #[test]
+    fn prune_floor_boundaries() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&sample("a", 0.0)).unwrap();
+        s.add(&sample("b", 0.5)).unwrap();
+        s.add(&sample("c", 1.0)).unwrap();
+        // floor = 0.0 -> nothing removed (importance < 0 never holds)
+        assert_eq!(prune(&s, 0.0).unwrap(), 0);
+        // floor = 1.0 -> removes a and b (importance < 1.0)
+        assert_eq!(prune(&s, 1.0).unwrap(), 2);
+        assert_eq!(s.list(None).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn prune_empty_store_is_noop() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        assert_eq!(prune(&s, 0.5).unwrap(), 0);
+        assert_eq!(prune(&s, 1.0).unwrap(), 0);
+    }
 }

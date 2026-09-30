@@ -4,7 +4,8 @@
 
 Local-first long-term memory store for LLM Agents, built in Rust for edge/mobile deployment.
 Provides CRUD, semantic + keyword hybrid retrieval, consolidation, deduplication, and forgetting —
-with zero network dependency and zero heavy ML frameworks.
+with zero network dependency and zero heavy ML frameworks. Also ships an offline-first,
+multi-relational memory plane (four relation views: semantic/temporal/causal/entity).
 
 Inspired by: rqlite / turso (embedded persistence), MemOS / mem0 / MemPalace (memo management).
 
@@ -48,6 +49,44 @@ cargo run -p aria-memo -- search --text "Rust" --top-k 5
 `aria-memo --version` / `-v` prints the build version.
 
 > The home directory `~/.ariacompute` is overridable via `ARIA_COMPUTE_HOME`.
+
+## Multi-relational Memory Plane (Jev-Mem inspired)
+
+A structured, multi-relational memory layer on top of the flat `MemoStore` — zero
+network dependency, offline by default (an LLM-backed `RelationScorer` is pluggable).
+
+Four relation views connect memories with directed edges:
+
+- `semantic` — meaning association (cosine over embeddings)
+- `temporal` — ordering / co-occurrence
+- `causal` — causal chain
+- `entity` — same-entity aggregation
+
+Edges live in a separate `relations` table and never mutate `Memo`. On write,
+`connect` infers four-view edges; on read, `retrieve` does hybrid search to seed
+anchors, then a bounded graph expansion across views, returning scored memories
+plus an inspectable `RetrieveTrace` (Jev-Mem's Retrieve→Assess→Expand, transparent).
+
+```bash
+# Infer four-view edges for an already-stored memory
+cargo run -p aria-memo -- connect --id <id>
+
+# Manually add an edge
+cargo run -p aria-memo -- relate --from <id> --to <id> --kind semantic --score 0.8
+
+# List edges (filter by from / to / kind)
+cargo run -p aria-memo -- relations --kind semantic --json
+
+# Bounded multi-relational traversal (views/budget/max-hops/top-k)
+cargo run -p aria-memo -- graph --text "Rust systems" --views semantic,entity --top-k 20 --json
+
+# Or turn graph awareness on for plain search
+cargo run -p aria-memo -- search --text "Rust" --graph
+```
+
+The default `LocalRelationScorer` is fully local (semantic = cosine, temporal = time
+order, entity = token Jaccard, causal = time-adjacency + overlap). Swap in an
+LLM-backed scorer without touching the controller.
 
 ## Benchmarks & Comparison
 
@@ -136,7 +175,7 @@ python benches/run.py --track b --benchmarks halumem
 - `crates/core` — data models, unified `MemoError`, traits
 - `crates/embed` — lightweight local embedder (ngram + hash/TF-IDF vectors) + cosine similarity
 - `crates/storage` — rusqlite bundled embedded persistence backend
-- `crates/memo` — memory management orchestration & lifecycle
+- `crates/memo` — memory management orchestration & lifecycle; multi-relational `MemoryController` / `RelationScorer`
 - `crates/cli` — command-line entry point
 - `benches/` — industry comparison harness
 - `docs/` — feature matrix and benchmark notes

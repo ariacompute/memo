@@ -146,4 +146,42 @@ mod tests {
         // dim 1 always maps to index 0
         assert_eq!(hash_dim("rust", 1), 0);
     }
+
+    #[test]
+    fn tokenize_empty_text_returns_empty() {
+        assert!(tokenize("   ").is_empty());
+        assert!(tokenize("!!! ???").is_empty());
+        assert!(tokenize("").is_empty());
+    }
+
+    #[test]
+    fn near_identical_text_has_high_cosine() {
+        let e = LocalEmbedder::new(128);
+        let a = e.embed("the user prefers rust programming").unwrap();
+        let b = e.embed("the user prefers rust programming").unwrap();
+        let c = e.embed("completely unrelated topic about cooking food").unwrap();
+        let ab = cosine::cosine(&a, &b).unwrap();
+        let ac = cosine::cosine(&a, &c).unwrap();
+        assert!(ab > 0.99, "identical text should embed to ~1.0, got {ab}");
+        assert!(ac < ab, "dissimilar text must score lower than identical");
+    }
+
+    #[test]
+    fn embed_respects_requested_dim() {
+        for d in [1usize, 8, 64, 256] {
+            let v = LocalEmbedder::new(d).embed("some text here to embed").unwrap();
+            assert_eq!(v.len(), d);
+        }
+    }
+
+    #[test]
+    fn cjk_char_bigrams_present() {
+        // CJK has no whitespace word tokens, so character 2-grams carry signal.
+        let cjk = tokenize("用户编程");
+        assert!(cjk.iter().any(|t| t.chars().count() == 2));
+        // pure CJK string must still produce a non-empty, usable vector
+        let e = LocalEmbedder::new(64);
+        let v = e.embed("用户喜欢编程").unwrap();
+        assert!(v.iter().any(|x| *x != 0.0));
+    }
 }

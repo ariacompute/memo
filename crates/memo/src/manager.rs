@@ -180,6 +180,239 @@ impl MemoManager {
     pub fn list(&self, memo_type: Option<MemoType>) -> Result<Vec<Memo>> {
         self.store.list(memo_type)
     }
+
+    /// Access the underlying embedder (used by the relation controller).
+    pub fn embedder(&self) -> Arc<dyn Embedder> {
+        self.embedder.clone()
+    }
+
+    /// Access the underlying store (used by the relation controller and CLI).
+    pub fn store(&self) -> Arc<dyn MemoStore> {
+        self.store.clone()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Multi-relational controller (Jev-Mem System-One analog, local heuristics)
+// ---------------------------------------------------------------------------
+
+/// Tunables for the relation controller.
+#[derive(Debug, Clone)]
+pub struct RelationConfig {
+    /// How many existing memories to evaluate as relation candidates per write.
+    pub candidate_top_k: usize,
+    /// Minimum score to accept an inferred relation edge.
+    pub relation_threshold: f32,
+    /// Cap on edges created in a single write→connect pass.
+    pub max_relations_per_write: usize,
+}
+
+impl Default for RelationConfig {
+    fn default() -> Self {
+        Self {
+            candidate_top_k: 10,
+            relation_threshold: 0.6,
+            max_relations_per_write: 8,
+        }
+    }
+}
+
+/// Pluggable relation scorer. The default [`LocalRelationScorer`] runs fully
+/// offline; swap in an LLM-backed implementation without touching the controller.
+pub trait RelationScorer: Send + Sync {
+    fn score(&self, a: &Memo, b: &Memo, kind: RelationKind) -> f32;
+}
+
+/// Lightweight tokenizer for entity/keyword overlap.
+fn tokens(s: &str) -> std::collections::HashSet<String> {
+    s.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| w.len() >= 2)
+        .map(|w| w.to_string())
+        .collect()
+}
+
+fn token_jaccard(a: &str, b: &str) -> f32 {
+    let ta = tokens(a);
+    let tb = tokens(b);
+    if ta.is_empty() || tb.is_empty() {
+        return 0.0;
+    }
+    let inter = ta.intersection(&tb).count() as f32;
+    let union = ta.union(&tb).count() as f32;
+    inter / union
+}
+
+/// Default offline heuristic scorer mirroring Jev-Mem's four relation views.
+pub struct LocalRelationScorer;
+
+impl RelationScorer for LocalRelationScorer {
+    fn score(&self, a: &Memo, b: &Memo, kind: RelationKind) -> f32 {
+        match kind {
+            RelationKind::Semantic => match (&a.embedding, &b.embedding) {
+                (Some(x), Some(y)) => cosine(x, y).unwrap_or(0.0),
+                _ => keyword_score(&a.content, &b.content),
+            },
+            RelationKind::Temporal => {
+                // Deterministic: an earlier memory can link forward to a later one.
+                if a.created_at <= b.created_at {
+                    1.0
+                } else {
+                    0.0
+                }
+            }
+            RelationKind::Entity => token_jaccard(&a.content, &b.content),
+            RelationKind::Causal => {
+                // Heuristic: chronologically adjacent + keyword/entity overlap.
+                let adj = if a.created_at <= b.created_at { 0.5 } else { 0.0 };
+                let overlap = token_jaccard(&a.content, &b.content);
+                (adj + 0.5 * overlap).min(1.0)
+            }
+        }
+    }
+}
+
+/// Local control plane: write→connect relation inference and
+/// retrieve→assess→expand bounded graph traversal.
+pub struct MemoryController {
+    embedder: Arc<dyn Embedder>,
+    store: Arc<dyn MemoStore>,
+    scorer: Arc<dyn RelationScorer>,
+    cfg: RelationConfig,
+}
+
+impl MemoryController {
+    pub fn new(
+        embedder: Arc<dyn Embedder>,
+        store: Arc<dyn MemoStore>,
+        scorer: Arc<dyn RelationScorer>,
+        cfg: RelationConfig,
+    ) -> Self {
+        Self {
+            embedder,
+            store,
+            scorer,
+            cfg,
+        }
+    }
+
+    /// Convenience constructor with the offline default scorer and config.
+    pub fn with_defaults(embedder: Arc<dyn Embedder>, store: Arc<dyn MemoStore>) -> Self {
+        Self::new(embedder, store, Arc::new(LocalRelationScorer), RelationConfig::default())
+    }
+
+    /// Write→connect: after `memo` is persisted, pick bounded candidates and
+    /// infer four-view relations, persisting edges above the threshold.
+    /// Returns the number of edges created.
+    pub fn connect(&self, memo: &Memo) -> Result<usize> {
+        // The source memory must already be persisted (write→connect ordering).
+        if self.store.get(&memo.id)?.is_none() {
+            return Err(MemoError::NotFound(memo.id.clone()));
+        }
+        let candidates = self.candidate_memos(memo)?;
+        let mut added = 0;
+        for cand in candidates.iter().take(self.cfg.max_relations_per_write) {
+            for kind in [
+                RelationKind::Semantic,
+                RelationKind::Temporal,
+                RelationKind::Causal,
+                RelationKind::Entity,
+            ] {
+                let sc = self.scorer.score(memo, cand, kind);
+                if sc < self.cfg.relation_threshold {
+                    continue;
+                }
+                let now = now_secs();
+                // Symmetric views (semantic/entity/causal) get both directions;
+                // temporal stays chronological (memo -> earlier candidate only).
+                let forward = kind == RelationKind::Temporal && memo.created_at > cand.created_at;
+                if !forward {
+                    self.store.add_relation(&Relation {
+                        from_id: memo.id.clone(),
+                        to_id: cand.id.clone(),
+                        kind,
+                        score: sc,
+                        provenance: "local".into(),
+                        created_at: now,
+                    })?;
+                    added += 1;
+                }
+                if kind != RelationKind::Temporal {
+                    self.store.add_relation(&Relation {
+                        from_id: cand.id.clone(),
+                        to_id: memo.id.clone(),
+                        kind,
+                        score: sc,
+                        provenance: "local".into(),
+                        created_at: now,
+                    })?;
+                    added += 1;
+                }
+            }
+        }
+        Ok(added)
+    }
+
+    /// Retrieve→assess→expand: hybrid search seeds anchors, then bounded graph
+    /// expansion across `views` returns scored memories plus an inspectable trace.
+    pub fn retrieve(
+        &self,
+        text: &str,
+        views: Vec<RelationKind>,
+        budget: usize,
+        max_hops: usize,
+        top_k: usize,
+    ) -> Result<GraphRetrieveResult> {
+        if budget == 0 || max_hops == 0 || top_k == 0 {
+            return Err(MemoError::InvalidParam(
+                "retrieve budget/max_hops/top_k must be > 0".into(),
+            ));
+        }
+        let mut sq = SearchQuery::new(text);
+        sq.top_k = self.cfg.candidate_top_k;
+        sq.semantic_weight = 0.7;
+        sq.keyword_weight = 0.3;
+        if sq.query_embedding.is_none() {
+            sq.query_embedding = Some(self.embedder.embed(text)?);
+        }
+        let seeds: Vec<MemoId> = self
+            .store
+            .search(&sq)?
+            .into_iter()
+            .map(|s| s.memo.id)
+            .collect();
+        if seeds.is_empty() {
+            return Ok(GraphRetrieveResult {
+                items: Vec::new(),
+                trace: RetrieveTrace {
+                    views,
+                    budget,
+                    stop_reason: "no-seeds".into(),
+                    hits: 0,
+                },
+            });
+        }
+        let q = GraphRetrieveQuery {
+            seeds,
+            views,
+            budget,
+            max_hops,
+            top_k,
+        };
+        self.store.expand(&q)
+    }
+
+    /// Nearest existing memories to `memo` (excluding itself), bounded by config.
+    fn candidate_memos(&self, memo: &Memo) -> Result<Vec<Memo>> {
+        let mut sq = SearchQuery::new(memo.content.clone());
+        sq.top_k = self.cfg.candidate_top_k + 1;
+        sq.semantic_weight = 0.7;
+        sq.keyword_weight = 0.3;
+        sq.query_embedding = memo.embedding.clone();
+        let mut cands = self.store.search(&sq)?;
+        cands.retain(|s| s.memo.id != memo.id);
+        Ok(cands.into_iter().map(|s| s.memo).collect())
+    }
 }
 
 #[cfg(test)]
@@ -408,5 +641,126 @@ mod tests {
         let m = MemoManager::with_sqlite(e, ":memory:").unwrap();
         let id = m.add("probe", MemoType::Working, HashMap::new(), 0.5).unwrap();
         assert!(m.get(&id).unwrap().is_some());
+    }
+
+    fn manual_memo(manager: &MemoManager, id: &str, content: &str, ts: i64) -> Memo {
+        let emb = manager.embedder.embed(content).unwrap();
+        Memo {
+            id: id.into(),
+            memo_type: MemoType::Working,
+            content: content.into(),
+            embedding: Some(emb),
+            metadata: HashMap::new(),
+            importance: 0.5,
+            version: 1,
+            created_at: ts,
+            updated_at: ts,
+        }
+    }
+
+    #[test]
+    fn controller_write_connect_and_retrieve() {
+        let mgr = mgr();
+        // Two similar memories written at different times.
+        let a = manual_memo(&mgr, "a", "user likes rust programming language", 100);
+        mgr.store.add(&a).unwrap();
+        let b = manual_memo(&mgr, "b", "user likes rust systems programming", 200);
+        mgr.store.add(&b).unwrap();
+
+        let ctrl = MemoryController::with_defaults(
+            mgr.embedder.clone(),
+            mgr.store.clone(),
+        );
+        // Connect b -> graph should infer semantic/entity edges to a.
+        let n = ctrl.connect(&b).unwrap();
+        assert!(n >= 2, "expected symmetric semantic+entity edges, got {n}");
+
+        // Retrieving from text near b should reach a via the graph.
+        let res = ctrl
+            .retrieve("rust programming", vec![], 20, 3, 10)
+            .unwrap();
+        let ids: Vec<&MemoId> = res.items.iter().map(|i| &i.memo.id).collect();
+        assert!(ids.contains(&&"a".to_string()));
+        assert!(ids.contains(&&"b".to_string()));
+        assert!(!res.trace.stop_reason.is_empty());
+        assert_eq!(res.trace.hits, ids.len());
+
+        // Invalid retrieve params rejected.
+        assert!(ctrl.retrieve("x", vec![], 0, 3, 10).is_err());
+    }
+
+    #[test]
+    fn controller_connect_rejects_missing_endpoint() {
+        let mgr = mgr();
+        let a = manual_memo(&mgr, "a", "standalone memory", 1);
+        let ctrl = MemoryController::with_defaults(mgr.embedder.clone(), mgr.store.clone());
+        // a is not persisted; connect must fail with NotFound.
+        assert!(matches!(ctrl.connect(&a), Err(MemoError::NotFound(_))));
+    }
+
+    #[test]
+    fn local_relation_scorer_stays_in_range() {
+        let m = mgr();
+        let a = manual_memo(&m, "a", "user likes rust programming language", 100);
+        let b = manual_memo(&m, "b", "rust systems programming by the user", 200);
+        let scorer = LocalRelationScorer;
+        for k in [
+            RelationKind::Semantic,
+            RelationKind::Temporal,
+            RelationKind::Causal,
+            RelationKind::Entity,
+        ] {
+            let s = scorer.score(&a, &b, k);
+            assert!(
+                (0.0..=1.0).contains(&s),
+                "LocalRelationScorer {k:?} out of [0,1]: {s}"
+            );
+        }
+    }
+
+    #[test]
+    fn connect_builds_symmetric_and_temporal_directed() {
+        let mgr = mgr();
+        // a earlier, b later
+        let a = manual_memo(&mgr, "a", "user likes rust", 100);
+        let b = manual_memo(&mgr, "b", "user likes rust systems", 200);
+        mgr.store.add(&a).unwrap();
+        mgr.store.add(&b).unwrap();
+        let ctrl = MemoryController::with_defaults(mgr.embedder.clone(), mgr.store.clone());
+        // Connect the EARLIER memory so temporal edges (earlier -> later) are produced.
+        let n = ctrl.connect(&a).unwrap();
+        assert!(n >= 2, "expected symmetric + temporal edges, got {n}");
+
+        let from_a = ctrl.store.get_relations(Some(&"a".into()), None, None, 50).unwrap();
+        let to_a = ctrl.store.get_relations(None, Some(&"a".into()), None, 50).unwrap();
+        let temporal_from_a = from_a.iter().any(|r| r.kind == RelationKind::Temporal);
+        let temporal_to_a = to_a.iter().any(|r| r.kind == RelationKind::Temporal);
+        // temporal only points from earlier -> later (a -> b), never reversed.
+        assert!(temporal_from_a, "expected a->b temporal edge");
+        assert!(!temporal_to_a, "temporal must not be reversed (b->a)");
+        // semantic/entity/causal are symmetric: a must also have incoming edges.
+        assert!(!to_a.is_empty(), "symmetric views must create edges into a");
+    }
+
+    #[test]
+    fn retrieve_returns_seeds_and_trace() {
+        let mgr = mgr();
+        let a = manual_memo(&mgr, "a", "user likes rust programming", 100);
+        let b = manual_memo(&mgr, "b", "rust systems programming by user", 200);
+        mgr.store.add(&a).unwrap();
+        mgr.store.add(&b).unwrap();
+        let ctrl = MemoryController::with_defaults(mgr.embedder.clone(), mgr.store.clone());
+        ctrl.connect(&a).unwrap();
+        // Retrieval from a query near the memories returns scored items + a populated trace.
+        let res = ctrl.retrieve("rust programming", vec![], 20, 3, 10).unwrap();
+        let ids: Vec<&MemoId> = res.items.iter().map(|i| &i.memo.id).collect();
+        assert!(ids.contains(&&"a".to_string()));
+        assert!(ids.contains(&&"b".to_string()));
+        assert!(!res.trace.stop_reason.is_empty());
+        assert_eq!(res.trace.hits, ids.len());
+        // Invalid retrieve params rejected.
+        assert!(ctrl.retrieve("x", vec![], 0, 3, 10).is_err());
+        assert!(ctrl.retrieve("x", vec![], 10, 0, 10).is_err());
+        assert!(ctrl.retrieve("x", vec![], 10, 3, 0).is_err());
     }
 }

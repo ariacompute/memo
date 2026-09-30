@@ -198,6 +198,210 @@ pub struct ScoredMemo {
     pub score: f32,
 }
 
+// ---------------------------------------------------------------------------
+// Multi-relational memory plane (Jev-Mem inspired: semantic/temporal/causal/entity)
+// ---------------------------------------------------------------------------
+
+/// The four relational graph views. Each relation edge is tagged with exactly one kind.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RelationKind {
+    /// Conceptual / meaning association.
+    Semantic,
+    /// Temporal ordering or co-occurrence.
+    Temporal,
+    /// Causal chain.
+    Causal,
+    /// Same entity / object aggregation.
+    Entity,
+}
+
+impl RelationKind {
+    /// Canonical string form used for persistence and wire transfer.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RelationKind::Semantic => "semantic",
+            RelationKind::Temporal => "temporal",
+            RelationKind::Causal => "causal",
+            RelationKind::Entity => "entity",
+        }
+    }
+}
+
+impl std::str::FromStr for RelationKind {
+    type Err = MemoError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            "semantic" => Ok(RelationKind::Semantic),
+            "temporal" => Ok(RelationKind::Temporal),
+            "causal" => Ok(RelationKind::Causal),
+            "entity" => Ok(RelationKind::Entity),
+            _ => Err(MemoError::InvalidParam(format!("unknown relation_kind: {s}"))),
+        }
+    }
+}
+
+/// A directed relation edge between two memories, stored in its own table so that
+/// `Memo` itself is never mutated.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Relation {
+    pub from_id: MemoId,
+    pub to_id: MemoId,
+    pub kind: RelationKind,
+    /// Edge confidence in [0, 1].
+    pub score: f32,
+    /// Provenance description (e.g. "local:semantic" or "llm:causal").
+    pub provenance: String,
+    /// Unix timestamp in seconds.
+    pub created_at: i64,
+}
+
+impl Relation {
+    /// Validate: rejects self-loops, negative/over-range scores, and empty provenance.
+    pub fn validate(&self) -> Result<()> {
+        if self.from_id == self.to_id {
+            return Err(MemoError::InvalidParam(format!(
+                "relation self-loop rejected: {}",
+                self.from_id
+            )));
+        }
+        if !(0.0..=1.0).contains(&self.score) {
+            return Err(MemoError::InvalidParam(format!(
+                "relation score {} out of [0,1]",
+                self.score
+            )));
+        }
+        if self.provenance.trim().is_empty() {
+            return Err(MemoError::InvalidParam("empty relation provenance".into()));
+        }
+        Ok(())
+    }
+}
+
+/// A bounded graph retrieval query (mirrors Jev-Mem's Retrieve->Assess->Expand).
+#[derive(Debug, Clone)]
+pub struct GraphRetrieveQuery {
+    /// Seed memory ids to start expansion from.
+    pub seeds: Vec<MemoId>,
+    /// Relation views to traverse; empty means "all four views".
+    pub views: Vec<RelationKind>,
+    /// Maximum number of distinct memories to visit (budget).
+    pub budget: usize,
+    /// Maximum traversal depth.
+    pub max_hops: usize,
+    /// Final number of scored memories to return.
+    pub top_k: usize,
+}
+
+impl GraphRetrieveQuery {
+    pub fn new(seeds: Vec<MemoId>) -> Self {
+        Self {
+            seeds,
+            views: Vec::new(),
+            budget: 60,
+            max_hops: 3,
+            top_k: 20,
+        }
+    }
+
+    /// Validate the query: seeds and all bounds must be positive.
+    pub fn validate(&self) -> Result<()> {
+        if self.seeds.is_empty() {
+            return Err(MemoError::InvalidParam("graph query needs >= 1 seed".into()));
+        }
+        if self.budget == 0 {
+            return Err(MemoError::InvalidParam("graph budget must be > 0".into()));
+        }
+        if self.max_hops == 0 {
+            return Err(MemoError::InvalidParam("graph max_hops must be > 0".into()));
+        }
+        if self.top_k == 0 {
+            return Err(MemoError::InvalidParam("graph top_k must be > 0".into()));
+        }
+        Ok(())
+    }
+}
+
+/// Inspectable decision trace returned alongside a graph retrieval, mirroring
+/// Jev-Mem's typed/transparent decisions.
+#[derive(Debug, Clone)]
+pub struct RetrieveTrace {
+    pub views: Vec<RelationKind>,
+    pub budget: usize,
+    pub stop_reason: String,
+    pub hits: usize,
+}
+
+/// Bundled result of a bounded graph expansion.
+#[derive(Debug, Clone)]
+pub struct GraphRetrieveResult {
+    pub items: Vec<ScoredMemo>,
+    pub trace: RetrieveTrace,
+}
+
+/// Generic bounded graph traversal (BFS with cycle avoidance) shared by every
+/// backend. `neighbor_fn` returns outgoing edges `(to_id, score, kind)` for a node;
+/// the caller filters by `views`, caps visited nodes at `budget`, and decays the
+/// accumulated score by 0.9 per hop. Returns reached `(id, score)` pairs plus a
+/// human-readable stop reason.
+pub fn graph_bfs(
+    seeds: &[MemoId],
+    views: &[RelationKind],
+    budget: usize,
+    max_hops: usize,
+    mut neighbor_fn: impl FnMut(&MemoId) -> Vec<(MemoId, f32, RelationKind)>,
+) -> (Vec<(MemoId, f32)>, String) {
+    use std::collections::{HashMap, HashSet, VecDeque};
+
+    let view_set: Option<&[RelationKind]> = if views.is_empty() { None } else { Some(views) };
+    let mut best: HashMap<MemoId, f32> = HashMap::new();
+    let mut visited: HashSet<MemoId> = HashSet::new();
+    let mut queue: VecDeque<(MemoId, usize, f32)> = VecDeque::new();
+
+    for s in seeds {
+        if visited.insert(s.clone()) {
+            best.insert(s.clone(), 1.0);
+            queue.push_back((s.clone(), 0, 1.0));
+        }
+    }
+
+    let mut stop = "exhausted".to_string();
+    while let Some((node, hop, acc)) = queue.pop_front() {
+        if hop >= max_hops {
+            continue;
+        }
+        let edges = neighbor_fn(&node);
+        for (nid, escore, kind) in edges {
+            if let Some(vs) = view_set {
+                if !vs.contains(&kind) {
+                    continue;
+                }
+            }
+            if visited.contains(&nid) {
+                continue;
+            }
+            if visited.len() >= budget {
+                stop = "budget".to_string();
+                break;
+            }
+            let nacc = acc * escore * 0.9;
+            visited.insert(nid.clone());
+            let e = best.entry(nid.clone()).or_insert(0.0);
+            if nacc > *e {
+                *e = nacc;
+            }
+            queue.push_back((nid, hop + 1, nacc));
+        }
+        if stop == "budget" {
+            break;
+        }
+    }
+
+    let mut out: Vec<(MemoId, f32)> = best.into_iter().collect();
+    out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    (out, stop)
+}
+
 /// A memory update patch.
 #[derive(Debug, Clone, Default)]
 pub struct MemoPatch {
@@ -392,5 +596,148 @@ mod tests {
         assert_eq!(keyword_score("apple pie", "rust go"), 0.0);
         // Empty content + non-empty query -> 0
         assert_eq!(keyword_score("", "x"), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod relation_tests {
+    use super::*;
+
+    #[test]
+    fn relation_kind_roundtrip() {
+        for k in [
+            RelationKind::Semantic,
+            RelationKind::Temporal,
+            RelationKind::Causal,
+            RelationKind::Entity,
+        ] {
+            let s = k.as_str();
+            assert_eq!(<RelationKind as std::str::FromStr>::from_str(s).unwrap(), k);
+        }
+        assert!(<RelationKind as std::str::FromStr>::from_str("bogus").is_err());
+    }
+
+    #[test]
+    fn relation_validate_normal_and_abnormal() {
+        let r = Relation {
+            from_id: "a".into(),
+            to_id: "b".into(),
+            kind: RelationKind::Semantic,
+            score: 0.7,
+            provenance: "local:semantic".into(),
+            created_at: 1,
+        };
+        assert!(r.validate().is_ok());
+
+        let mut self_loop = r.clone();
+        self_loop.to_id = "a".into();
+        assert!(matches!(
+            self_loop.validate(),
+            Err(MemoError::InvalidParam(_))
+        ));
+
+        let mut bad_score = r.clone();
+        bad_score.score = 1.5;
+        assert!(matches!(
+            bad_score.validate(),
+            Err(MemoError::InvalidParam(_))
+        ));
+
+        let mut no_prov = r.clone();
+        no_prov.provenance = "  ".into();
+        assert!(matches!(
+            no_prov.validate(),
+            Err(MemoError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
+    fn graph_query_validate() {
+        let q = GraphRetrieveQuery::new(vec!["a".into()]);
+        assert!(q.validate().is_ok());
+
+        assert!(matches!(
+            GraphRetrieveQuery::new(vec![]).validate(),
+            Err(MemoError::InvalidParam(_))
+        ));
+        let mut q = GraphRetrieveQuery::new(vec!["a".into()]);
+        q.budget = 0;
+        assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
+        let mut q = GraphRetrieveQuery::new(vec!["a".into()]);
+        q.max_hops = 0;
+        assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
+        let mut q = GraphRetrieveQuery::new(vec!["a".into()]);
+        q.top_k = 0;
+        assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
+    }
+
+    #[test]
+    fn graph_bfs_traverses_and_avoids_cycles() {
+        // a -> b -> c, and c -> a (cycle). Seed at a, hop=2 budget=10.
+        let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
+            let mut m = HashMap::new();
+            m.insert(
+                "a".into(),
+                vec![("b".into(), 0.9, RelationKind::Semantic)],
+            );
+            m.insert(
+                "b".into(),
+                vec![("c".into(), 0.8, RelationKind::Semantic)],
+            );
+            m.insert("c".into(), vec![("a".into(), 0.7, RelationKind::Causal)]);
+            m
+        };
+        let (out, stop) = graph_bfs(
+            &["a".into()],
+            &[],
+            10,
+            2,
+            |n| edges.get(n).cloned().unwrap_or_default(),
+        );
+        let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
+        assert!(ids.contains(&&"a".to_string()));
+        assert!(ids.contains(&&"b".to_string()));
+        assert!(ids.contains(&&"c".to_string()));
+        // Cycle must not cause infinite expansion; visited dedupes a.
+        assert!(stop == "exhausted" || stop == "budget");
+        // Seed keeps highest score.
+        assert_eq!(out[0].0, "a");
+    }
+
+    #[test]
+    fn graph_bfs_respects_view_filter_and_budget() {
+        let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
+            let mut m = HashMap::new();
+            m.insert(
+                "a".into(),
+                vec![
+                    ("b".into(), 0.9, RelationKind::Semantic),
+                    ("c".into(), 0.9, RelationKind::Temporal),
+                ],
+            );
+            m
+        };
+        // Only semantic view -> c (temporal) excluded.
+        let (out, _) = graph_bfs(
+            &["a".into()],
+            &[RelationKind::Semantic],
+            10,
+            3,
+            |n| edges.get(n).cloned().unwrap_or_default(),
+        );
+        let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
+        assert!(ids.contains(&&"b".to_string()));
+        assert!(!ids.contains(&&"c".to_string()));
+
+        // Budget=2 -> only seed + one neighbor.
+        let (out, stop) = graph_bfs(
+            &["a".into()],
+            &[],
+            2,
+            3,
+            |n| edges.get(n).cloned().unwrap_or_default(),
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(stop, "budget");
     }
 }

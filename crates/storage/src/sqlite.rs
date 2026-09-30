@@ -19,6 +19,18 @@ CREATE TABLE IF NOT EXISTS memories (
 CREATE INDEX IF NOT EXISTS idx_memories_type ON memories(memo_type);
 CREATE INDEX IF NOT EXISTS idx_memories_updated_at ON memories(updated_at);
 CREATE INDEX IF NOT EXISTS idx_memories_deleted ON memories(deleted);
+
+CREATE TABLE IF NOT EXISTS relations (
+    from_id TEXT NOT NULL,
+    to_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    score REAL NOT NULL,
+    provenance TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    PRIMARY KEY (from_id, to_id, kind)
+);
+CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(from_id, kind);
+CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_id);
 ";
 
 /// Embedded SQLite memory storage backend.
@@ -109,6 +121,26 @@ fn row_to_memo(row: &Row) -> rusqlite::Result<Memo> {
         version: version as u64,
         created_at: created,
         updated_at: updated,
+    })
+}
+
+fn row_to_relation(row: &Row) -> rusqlite::Result<Relation> {
+    let from_id: String = row.get(0)?;
+    let to_id: String = row.get(1)?;
+    let kind: String = row.get(2)?;
+    let score: f64 = row.get(3)?;
+    let provenance: String = row.get(4)?;
+    let created_at: i64 = row.get(5)?;
+    let kind = <RelationKind as std::str::FromStr>::from_str(&kind).map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(2, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+    Ok(Relation {
+        from_id,
+        to_id,
+        kind,
+        score: score as f32,
+        provenance,
+        created_at,
     })
 }
 
@@ -354,6 +386,163 @@ impl MemoStore for SqliteStore {
         tx.commit().map_err(db_err)?;
         Ok(())
     }
+
+    fn add_relation(&self, rel: &Relation) -> Result<()> {
+        rel.validate()?;
+        let conn = self.conn.lock().expect("sqlite lock poisoned");
+        for id in [&rel.from_id, &rel.to_id] {
+            let exists: bool = conn
+                .query_row(
+                    "SELECT 1 FROM memories WHERE id=?1 AND deleted=0",
+                    [id.clone()],
+                    |_| Ok(true),
+                )
+                .optional()
+                .map_err(db_err)?
+                .is_some();
+            if !exists {
+                return Err(MemoError::NotFound(id.clone()));
+            }
+        }
+        conn.execute(
+            "INSERT INTO relations (from_id, to_id, kind, score, provenance, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(from_id, to_id, kind) DO UPDATE SET score=?4, provenance=?5, created_at=?6",
+            params![
+                rel.from_id,
+                rel.to_id,
+                rel.kind.as_str(),
+                rel.score,
+                rel.provenance,
+                rel.created_at
+            ],
+        )
+        .map_err(db_err)?;
+        Ok(())
+    }
+
+    fn get_relations(
+        &self,
+        from: Option<&MemoId>,
+        to: Option<&MemoId>,
+        kind: Option<RelationKind>,
+        top_k: usize,
+    ) -> Result<Vec<Relation>> {
+        let conn = self.conn.lock().expect("sqlite lock poisoned");
+        let mut sql = String::from(
+            "SELECT from_id, to_id, kind, score, provenance, created_at FROM relations WHERE 1=1",
+        );
+        let mut binds: Vec<String> = Vec::new();
+        if let Some(f) = from {
+            sql.push_str(" AND from_id=?");
+            binds.push(f.clone());
+        }
+        if let Some(t) = to {
+            sql.push_str(" AND to_id=?");
+            binds.push(t.clone());
+        }
+        if let Some(k) = kind {
+            sql.push_str(" AND kind=?");
+            binds.push(k.as_str().to_string());
+        }
+        sql.push_str(" ORDER BY created_at DESC LIMIT ?");
+        binds.push(top_k.to_string());
+        let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), row_to_relation)
+            .map_err(db_err)?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r.map_err(db_err)?);
+        }
+        Ok(out)
+    }
+
+    fn delete_relations(
+        &self,
+        from: Option<&MemoId>,
+        to: Option<&MemoId>,
+        kind: Option<RelationKind>,
+    ) -> Result<usize> {
+        if from.is_none() && to.is_none() && kind.is_none() {
+            return Err(MemoError::InvalidParam(
+                "delete_relations needs at least one filter".into(),
+            ));
+        }
+        let conn = self.conn.lock().expect("sqlite lock poisoned");
+        let mut sql = String::from("DELETE FROM relations WHERE 1=1");
+        let mut binds: Vec<String> = Vec::new();
+        if let Some(f) = from {
+            sql.push_str(" AND from_id=?");
+            binds.push(f.clone());
+        }
+        if let Some(t) = to {
+            sql.push_str(" AND to_id=?");
+            binds.push(t.clone());
+        }
+        if let Some(k) = kind {
+            sql.push_str(" AND kind=?");
+            binds.push(k.as_str().to_string());
+        }
+        let n = conn
+            .execute(&sql, rusqlite::params_from_iter(binds.iter()))
+            .map_err(db_err)?;
+        Ok(n)
+    }
+
+    fn expand(&self, query: &GraphRetrieveQuery) -> Result<GraphRetrieveResult> {
+        query.validate()?;
+        let conn = self.conn.lock().expect("sqlite lock poisoned");
+        let mut edges_stmt = conn
+            .prepare("SELECT from_id, to_id, kind, score FROM relations")
+            .map_err(db_err)?;
+        let edges_iter = edges_stmt
+            .query_map([], |row| {
+                let from_id: String = row.get(0)?;
+                let to_id: String = row.get(1)?;
+                let kind: String = row.get(2)?;
+                let score: f64 = row.get(3)?;
+                let kind = <RelationKind as std::str::FromStr>::from_str(&kind).map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        2,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
+                Ok((from_id, to_id, kind, score as f32))
+            })
+            .map_err(db_err)?;
+        use std::collections::HashMap as Map;
+        let mut edges: Map<MemoId, Vec<(MemoId, f32, RelationKind)>> = Map::new();
+        for e in edges_iter {
+            let (f, t, k, s) = e.map_err(db_err)?;
+            edges.entry(f).or_default().push((t, s, k));
+        }
+        drop(edges_stmt);
+        drop(conn);
+
+        let (reached, stop) = graph_bfs(
+            &query.seeds,
+            &query.views,
+            query.budget,
+            query.max_hops,
+            |n| edges.get(n).cloned().unwrap_or_default(),
+        );
+
+        let mut items = Vec::new();
+        for (id, score) in reached.into_iter().take(query.top_k) {
+            if let Some(m) = self.get(&id)? {
+                items.push(ScoredMemo { memo: m, score });
+            }
+        }
+        let trace = RetrieveTrace {
+            views: query.views.clone(),
+            budget: query.budget,
+            stop_reason: stop,
+            hits: items.len(),
+        };
+        Ok(GraphRetrieveResult { items, trace })
+    }
 }
 
 #[cfg(test)]
@@ -546,5 +735,72 @@ mod tests {
             .unwrap();
         let r = s.get(&"x".into());
         assert!(matches!(r, Err(MemoError::Serialization(_))));
+    }
+
+    fn rel(from: &str, to: &str, kind: RelationKind, score: f32, ts: i64) -> Relation {
+        Relation {
+            from_id: from.into(),
+            to_id: to.into(),
+            kind,
+            score,
+            provenance: "local".into(),
+            created_at: ts,
+        }
+    }
+
+    #[test]
+    fn sqlite_relation_crud_and_expand() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "x", None)).unwrap();
+        s.add(&mem("b", "y", None)).unwrap();
+        s.add(&mem("c", "z", None)).unwrap();
+
+        // Missing endpoint.
+        assert!(matches!(
+            s.add_relation(&rel("a", "zz", RelationKind::Semantic, 0.8, 1)),
+            Err(MemoError::NotFound(_))
+        ));
+
+        s.add_relation(&rel("a", "b", RelationKind::Semantic, 0.9, 1))
+            .unwrap();
+        s.add_relation(&rel("b", "c", RelationKind::Semantic, 0.7, 2))
+            .unwrap();
+        // idempotent upsert (same key, new score)
+        s.add_relation(&rel("a", "b", RelationKind::Semantic, 0.95, 3))
+            .unwrap();
+        let rels = s.get_relations(Some(&"a".into()), None, None, 10).unwrap();
+        assert_eq!(rels.len(), 1);
+        assert!((rels[0].score - 0.95).abs() < 1e-6);
+
+        // Filter by kind.
+        let only_causal = s
+            .get_relations(Some(&"a".into()), None, Some(RelationKind::Causal), 10)
+            .unwrap();
+        assert!(only_causal.is_empty());
+
+        // Expand a -> b -> c.
+        let q = GraphRetrieveQuery {
+            seeds: vec!["a".into()],
+            views: vec![],
+            budget: 10,
+            max_hops: 3,
+            top_k: 10,
+        };
+        let res = s.expand(&q).unwrap();
+        let ids: Vec<&MemoId> = res.items.iter().map(|i| &i.memo.id).collect();
+        assert!(ids.contains(&&"a".to_string()));
+        assert!(ids.contains(&&"b".to_string()));
+        assert!(ids.contains(&&"c".to_string()));
+        assert_eq!(res.trace.hits, 3);
+
+        // Delete by from.
+        let removed = s.delete_relations(Some(&"a".into()), None, None).unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(s.get_relations(Some(&"a".into()), None, None, 10).unwrap().len(), 0);
+        // empty filter rejected
+        assert!(matches!(
+            s.delete_relations(None, None, None),
+            Err(MemoError::InvalidParam(_))
+        ));
     }
 }
