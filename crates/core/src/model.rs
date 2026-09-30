@@ -436,6 +436,76 @@ pub fn keyword_score(content: &str, query: &str) -> f32 {
     matched as f32 / words.len() as f32
 }
 
+/// Stronger offline lexical relevance for hybrid retrieval (BM25-lite + exact
+/// phrase bonus). Tokenizes into word tokens (len >= 2) and CJK character
+/// 2-grams, rewards matched *specific* terms (rarity-weighted) and exact phrase
+/// presence, normalized to `[0,1]`. Dependency-free, so it lifts retrieval
+/// quality when the local embedding is weak. `keyword_score` stays the simpler
+/// ratio (used by relation-scoring fallbacks); this is what the storage-layer
+/// hybrid `search` uses.
+pub fn lexical_relevance(content: &str, query: &str) -> f32 {
+    let cl = content.to_lowercase();
+    let ql = query.to_lowercase();
+    let q_terms = tokenize_terms(&ql);
+    if q_terms.is_empty() {
+        return if ql.trim().is_empty() {
+            0.0
+        } else {
+            f32::from(cl.contains(ql.trim()))
+        };
+    }
+    // term frequencies within the content
+    let c_terms = tokenize_terms(&cl);
+    let mut cf: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for t in &c_terms {
+        *cf.entry(t.as_str()).or_insert(0) += 1;
+    }
+    let mut sum = 0.0f32;
+    for qt in &q_terms {
+        if let Some(&tf) = cf.get(qt.as_str()) {
+            // rarity weight: rarer terms are more discriminative; occurrence term
+            // saturates so a term repeated many times does not dominate.
+            let rarity = 1.0 / (1.0 + (tf as f32).ln());
+            let occ = ((tf as f32).min(3.0) / 3.0).min(1.0);
+            sum += rarity * (0.5 + 0.5 * occ);
+        }
+    }
+    let mut score = sum / q_terms.len() as f32;
+    // exact phrase bonus: a direct substring match is a strong relevance signal.
+    let qtrim = ql.trim();
+    if !qtrim.is_empty() && cl.contains(qtrim) {
+        score = (score + 0.5).min(1.0);
+    }
+    score.min(1.0)
+}
+
+/// Tokenizer for lexical scoring: lowercase word tokens (len >= 2) plus CJK
+/// character 2-grams. CJK text has no whitespace word tokens, so character
+/// bigrams carry the lexical signal.
+fn tokenize_terms(s: &str) -> Vec<String> {
+    let sl = s.to_lowercase();
+    let mut out: Vec<String> = Vec::new();
+    for w in sl.split(|c: char| !c.is_alphanumeric()) {
+        if w.len() >= 2 {
+            out.push(w.to_string());
+        }
+    }
+    let chars: Vec<char> = sl.chars().filter(|c| c.is_alphanumeric()).collect();
+    let mut i = 0;
+    while i + 1 < chars.len() {
+        if is_cjk(chars[i]) && is_cjk(chars[i + 1]) {
+            out.push(format!("{}{}", chars[i], chars[i + 1]));
+        }
+        i += 1;
+    }
+    out
+}
+
+/// Whether a character is in the CJK Unified Ideographs block.
+fn is_cjk(c: char) -> bool {
+    (c as u32) >= 0x4E00 && (c as u32) <= 0x9FFF
+}
+
 /// Generate an in-process unique memory id.
 pub fn generate_id() -> MemoId {
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -596,6 +666,22 @@ mod tests {
         assert_eq!(keyword_score("apple pie", "rust go"), 0.0);
         // Empty content + non-empty query -> 0
         assert_eq!(keyword_score("", "x"), 0.0);
+    }
+
+    #[test]
+    fn lexical_relevance_behaves() {
+        // exact phrase present -> strong score
+        assert!(lexical_relevance("my name is martin", "my name is martin") > 0.9);
+        // a specific rare term match must beat unrelated text
+        let a = lexical_relevance("my name is martin and i like rust", "who is martin");
+        let b = lexical_relevance("banana smoothie recipe with ice", "who is martin");
+        assert!(a > b, "specific-term match must outrank unrelated text");
+        assert!(a > 0.3 && b == 0.0);
+        // CJK char-bigram overlap
+        let c = lexical_relevance("用户喜欢编程", "用户编程");
+        assert!(c > 0.0);
+        // empty query -> 0
+        assert_eq!(lexical_relevance("anything", ""), 0.0);
     }
 }
 

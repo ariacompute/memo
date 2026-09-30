@@ -353,7 +353,7 @@ impl MemoStore for SqliteStore {
                     (Some(a), Some(b)) => cosine(a, b).unwrap_or(0.0),
                     _ => 0.0,
                 };
-                let keyword = keyword_score(&m.content, &q.text);
+                let keyword = lexical_relevance(&m.content, &q.text);
                 let score = q.semantic_weight * semantic + q.keyword_weight * keyword;
                 ScoredMemo { memo: m, score }
             })
@@ -705,6 +705,23 @@ mod tests {
         let r = s.search(&q).unwrap();
         assert_eq!(r.len(), 1);
         assert!(r[0].score.abs() < 1e-6);
+    }
+
+    #[test]
+    fn lexical_relevance_lifts_specific_fact() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "my name is martin and i like rust systems", None))
+            .unwrap();
+        s.add(&mem("b", "banana smoothie recipe with ice and fruit", None))
+            .unwrap();
+        s.add(&mem("c", "the user enjoys cooking pasta on weekends", None))
+            .unwrap();
+        let mut q = SearchQuery::new("what is the user's name");
+        q.semantic_weight = 0.0;
+        q.keyword_weight = 1.0;
+        q.query_embedding = None; // keyword-only ranking
+        let r = s.search(&q).unwrap();
+        assert_eq!(r[0].memo.id, "a");
     }
 
     #[test]

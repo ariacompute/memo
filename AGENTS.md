@@ -13,7 +13,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - crates/core：Memo 模型、MemoError、MemoStore/Embedder/StorageBackend trait
 - crates/storage：rusqlite 后端（建表/迁移/索引/CRUD/批量写入）+ 复制后端占位
 - crates/embed：ngram+哈希/TF-IDF 向量 embedder + 余弦相似度
-- crates/memo：manager(增删改查/检索(search 混合 + recall 纯向量)/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘) + MemoryController + RelationScorer（write→connect 推断四视图边 / retrieve→assess→expand 有界图遍历，附带可检视 RetrieveTrace；默认 LocalRelationScorer 离线）
+- crates/memo：manager(增删改查/检索(search 混合[语义+词法 BM25-lite] + recall 纯向量)/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘) + MemoryController + RelationScorer（write→connect 推断四视图边 / retrieve→assess→expand 有界图遍历，附带可检视 RetrieveTrace；默认 LocalRelationScorer 离线）
 - crates/cli：`add/get/search/recall/list/update/forget/bench` + 自管理 `setup`(`--status`/`--clear`，交互选择 GitHub/Gitee 升级源) 与 `upgrade [version]`(`--url` 可选覆盖) ；`--version`/`-v` 打印版本（list/search 支持 `--json` 机器可读输出）。关系平面子命令：`connect`(按 id 推断四视图边) / `relate`(手动建边) / `relations`(列边 by from/to/kind) / `graph`(有界多关系遍历，views/budget/max_hops/top_k，--json 输出含 RetrieveTrace)；`search --graph` 等价开启图感知检索。
 - benches/：Python 评测编排（Track A 微基准+合成检索；Track B 四基准 locomo_refined/halumem/longmemeval/personamem）
 - docs/：compare.md 功能矩阵、bench_results.md 结果说明
