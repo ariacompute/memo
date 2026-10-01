@@ -72,6 +72,16 @@ enum Command {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Batch hybrid search over multiple queries (repeat `--text` for each query)
+    SearchBatch {
+        #[arg(long)]
+        text: Vec<String>,
+        #[arg(long, default_value_t = 5)]
+        top_k: usize,
+        /// Machine-readable JSON output (per-query id/score/content); default is score\tcontent
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// List memories
     List {
         #[arg(long)]
@@ -155,6 +165,9 @@ enum Command {
         /// Kept for compatibility; output is always JSON
         #[arg(long, default_value_t = true)]
         json: bool,
+        /// Also measure batch retrieval throughput (single lock over all queries)
+        #[arg(long, default_value_t = false)]
+        batch: bool,
     },
     /// Write CLI config (~/.ariacompute/memo-cli.yml)
     Setup(Box<SetupArgs>),
@@ -188,6 +201,7 @@ fn run(cli: Cli) -> Result<()> {
             top_k,
             warmup,
             json: _,
+            batch,
         } => {
             let path = std::env::temp_dir().join(format!(
                 "aria-memo-bench-{}.db",
@@ -195,7 +209,7 @@ fn run(cli: Cli) -> Result<()> {
             ));
             let _ = std::fs::remove_file(&path);
             let manager = build_manager(path.to_str().unwrap_or(":memory:"));
-            println!("{}", commands::bench(&manager, size, top_k, warmup)?);
+            println!("{}", commands::bench(&manager, size, top_k, warmup, batch)?);
             let _ = std::fs::remove_file(&path);
         }
         other => {
@@ -224,6 +238,9 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 Command::Recall { text, top_k, json } => {
                     println!("{}", commands::recall(&manager, &text, top_k, json)?);
+                }
+                Command::SearchBatch { text, top_k, json } => {
+                    println!("{}", commands::search_batch(&manager, &text, top_k, json)?);
                 }
                 Command::List { r#type, json } => {
                     println!("{}", commands::list(&manager, r#type.as_deref(), json)?);

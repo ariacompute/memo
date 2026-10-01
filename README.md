@@ -17,6 +17,15 @@ Layered cargo workspace (trait-decoupled):
 cli(aria-memo) → memo(orchestration) → storage(SQLite) / embed(local embedding) → core(models/errors/traits)
 ```
 
+### Search & retrieval
+
+Hybrid search blends semantic (cosine over local embeddings) and lexical (keyword) relevance:
+`score = semantic_weight·cosine + keyword_weight·lexical_relevance`.
+
+- **Lexical pushdown (FTS5).** `memories.content` is indexed with a SQLite FTS5 virtual table (`memories_fts`). On a hybrid query the store runs `MATCH` + `bm25()` *inside SQLite* to prune the candidate set to the top lexical hits first, then computes cosine only on that small set — eliminating the old full-table scan. Pure-semantic queries (or when FTS5 finds no lexical hit) fall back to a full scan so recall is preserved.
+- **Higher lexical weight.** `SearchQuery.keyword_weight` defaults to `0.5` (was `0.3`), so lexical hits prune and rank earlier; `semantic_weight` stays `0.7`. `MemoryController` uses the same `0.7 / 0.5` blend.
+- **Batch retrieval.** `MemoStore::search_batch` / `MemoManager::search_batch` / `recall_batch` score many queries under a single connection lock (one FTS5 prep + one scan), returning `Vec<Vec<ScoredMemo>>`. The CLI exposes `aria-memo search-batch --text … --text …` and `aria-memo bench --batch` (which reports `batch.ops_per_sec`).
+
 ## Quick Start
 
 ```bash
@@ -105,36 +114,22 @@ Compare against: mem0 / MemOS / MemPalace / Zep / Letta.
 - Python harness (Track A storage/retrieval + Track B end-to-end quality): [benches/README.md](./benches/README.md)
 
 ```bash
-cargo run -p aria-memo -- bench --size 1000 --json
 pip install -r benches/requirements.txt
 python benches/run.py --track a --size 1000
 python benches/run.py --track b --dry-run
 ```
 
-### Benchmark Report
-
-Run locally with `cargo run -p aria-memo -- bench --size 1000 --json`
-(local-first, offline, zero network).
-
-| Operation | Dataset size | ops/sec | p50 (ms) | p99 (ms) |
-|-----------|-------------:|--------:|---------:|---------:|
-| `add`     | 1000         | 161.18  | 5.15     | 17.76    |
-| `search`  | 1000         | 79.88   | 11.74    | 25.58    |
-
-> Environment: local-first embedded store (rusqlite bundled), no network, `top_k=5`, warmup=10.
-> Numbers are illustrative from a single dev run; rebuild and re-run for your own hardware.
-
 ### Track A evaluation report
 
 Run with `python benches/run.py --track a --size 1000`
-(results under `benches/results/`, e.g. `20260825T054023Z/track_a.json`).
+(results under `benches/results/`, e.g. `20261001T012416Z/track_a.json`).
 
 **A1 — Microbench (aria-memo, size=1000, top_k=5, offline):**
 
 | Operation | ops/sec | p50 (ms) | p99 (ms) |
 |-----------|--------:|---------:|---------:|
-| `add`     | 177.60  | 4.79     | 18.04    |
-| `search`  | 636.91  | 1.47     | 3.00     |
+| `add`     | 298.36  | 2.98     | 9.77     |
+| `search`  | 434.66  | 2.19     | 3.93     |
 
 **A2 — Retrieval quality (synthetic_retrieval.json, 8 queries, top_k=5):**
 
@@ -142,7 +137,7 @@ Run with `python benches/run.py --track a --size 1000`
 |--------|---------:|-----:|--------:|:-------:|
 | aria   | 1.00     | 1.00 | 8       | true    |
 
-> A1 reuses the in-process CLI `bench` JSON; A2 measures hybrid (semantic + keyword) retrieval on a synthetic dataset. See [docs/compare.md](./docs/compare.md) for the full comparison matrix.
+> A1 is an in-process (offline) microbenchmark; A2 measures hybrid (semantic + keyword) retrieval on a synthetic dataset. See [docs/compare.md](./docs/compare.md) for the full comparison matrix.
 
 ### Track B evaluation report
 
@@ -162,11 +157,14 @@ LLM-judge metrics are **optional** — skipped silently when no credentials are 
 
 ```bash
 export BENCH_LLM_API_KEY=sk-...
-export BENCH_LLM_BASE_URL=https://...   # optional, OpenAI-compatible
-python benches/run.py --track b --judge-model gpt-4o-mini
+export BENCH_LLM_BASE_URL=https://tokenhub.tencentmaas.com
+python benches/run.py --track b --judge-model hy3
 ```
 
 > Each benchmark falls back to the bundled `benches/data/fixtures/` (synthetic, offline smoke) when real data is absent; `dataset_source` is recorded in the report. Use `--benchmarks`, `--limit`, or `--ingest-only` to scope a run.
+
+> **Timeouts & progress (no silent hangs).** Every aria-memo CLI call has a 120s timeout (override `ARIA_MEMO_TIMEOUT`); the LLM judge has a 30s per-call timeout (override `BENCH_LLM_TIMEOUT`). Both emit `[bench]`/`[judge]` progress to stderr, so a long run stays observable. `--judge-model` requires `BENCH_LLM_API_KEY` (and `BENCH_LLM_BASE_URL` for self-hosted models like `hy3`); without it, judge metrics are skipped and only offline metrics run. Memory-heavy sub-tasks (e.g. `halumem` extraction) issue one judge call per memory — keep the run bounded with `--limit`.
+> **Judge errors are surfaced, not swallowed.** A failing judge call (bad `BENCH_LLM_BASE_URL`/`API_KEY`, unknown model, rate-limit, or an incompatible response shape) prints `[judge] ERROR (first): …` with the HTTP status + body (or exception) **and every URL tried**, then a count every 10 errors. Errored calls are treated as undecidable and skipped — the run still finishes. The judge (a) auto-retries the alternate `/v1` mount on HTTP 404, (b) retries transient failures (timeout / HTTP 429·5xx) with exponential backoff, **escalating the per-call timeout 1×→2×→4×→8×** on retries, and (c) already sends `stream: false` and tolerates chat/completion/streaming responses. Tune with `BENCH_LLM_TIMEOUT` (per-call seconds, default 30) and `BENCH_LLM_RETRIES` (default 2). A persistently high error rate means the endpoint is too slow or misconfigured — raise `BENCH_LLM_TIMEOUT` (e.g. `120`) for long-prompt benchmarks like `halumem`.
 
 **Scoping large real datasets.** Real datasets can be huge — e.g. `halumem` (HaluMem-Medium) holds ~75k `add` calls. `--limit N` bounds how many samples are *ingested and evaluated* per benchmark (for `halumem` each record is one sample set; for `locomo_refined`/`longmemeval`/`personamem` it caps questions/items). When `--limit` is omitted, a default cap of `50` samples/benchmark is applied (printed to stderr) so an unbounded run does not hang. Ingestion prints progress to stderr (`[bench] ingest 500/N ... ingest done`).
 
@@ -177,6 +175,24 @@ python benches/run.py --track b --limit 2
 cargo build -p aria-memo --release
 python benches/run.py --track b --benchmarks halumem
 ```
+
+**Offline results — this run (`20261001T014217Z/track_b.json`, real datasets, judge unavailable):**
+
+All four benchmarks ran on the bundled real datasets; the LLM judge was **not** available (`BENCH_LLM_API_KEY` absent → `judge.available=false`, 0 calls), so every LLM-dependent metric is `skipped`. Only offline metrics are reported:
+
+| Benchmark | Offline metric | Value | Subset / note |
+|-----------|---------------|------:|---------------|
+| `locomo_refined` | F1 | 0.008 / 0.006 / 0.026 | subsets 1/2/3 (no LLM answer gen) |
+| `locomo_refined` | BLEU | 0.004 / 0.003 / 0.014 | subsets 1/2/3 |
+| `locomo_refined` | judge_accuracy | skipped | no LLM judge |
+| `halumem` | retrieval_recall@5 | 1.00 | extraction subset — retrieval OK |
+| `halumem` | retrieval_recall@5 | 0.00 | qa subset |
+| `halumem` | memory_recall / memory_accuracy / false_memory_resistance / f1 / qa_accuracy | skipped | no LLM judge |
+| `longmemeval` | retrieval_recall@5 | 0.00 | offline |
+| `longmemeval` | qa_accuracy | skipped | no LLM judge |
+| `personamem` | multiple_choice_accuracy | 0.00 | offline (no LLM answering) |
+
+Takeaway: with **no LLM judge**, Track B cannot score generative QA quality — offline metrics only confirm that retrieval works for `halumem` extraction (recall@5 = 1.00), while other retrieval/multiple-choice signals are near zero. The `halumem` `updating` subset metrics are also skipped because that dataset has no update-type questions. Meaningful quality numbers require the LLM-judge path (set `BENCH_LLM_API_KEY`) or a larger offline signal set.
 
 ## Directory
 

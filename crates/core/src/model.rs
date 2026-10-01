@@ -122,7 +122,7 @@ impl SearchQuery {
             text: text.into(),
             top_k: 10,
             semantic_weight: 0.7,
-            keyword_weight: 0.3,
+            keyword_weight: 0.5,
             score_threshold: 0.0,
             memo_type: None,
             query_embedding: None,

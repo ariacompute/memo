@@ -125,6 +125,42 @@ impl MemoManager {
         self.store.search(&query)
     }
 
+    /// Batch hybrid search: embeds each query (if needed) and scores all of them
+    /// under a single storage lock via `search_batch`.
+    pub fn search_batch(&self, queries: &[SearchQuery]) -> Result<Vec<Vec<ScoredMemo>>> {
+        let mut qs: Vec<SearchQuery> = Vec::with_capacity(queries.len());
+        for q in queries {
+            let mut q = q.clone();
+            q.validate()?;
+            if q.query_embedding.is_none() {
+                let emb = self.embedder.embed(&q.text)?;
+                q.query_embedding = Some(emb);
+            }
+            qs.push(q);
+        }
+        self.store.search_batch(&qs)
+    }
+
+    /// Batch pure-vector recall (semantic only, `keyword_weight = 0`).
+    pub fn recall_batch(&self, queries: &[RecallQuery]) -> Result<Vec<Vec<ScoredMemo>>> {
+        let mut qs: Vec<SearchQuery> = Vec::with_capacity(queries.len());
+        for q in queries {
+            let mut sq = SearchQuery::new(q.text.clone());
+            sq.top_k = q.top_k;
+            sq.score_threshold = q.score_threshold;
+            sq.memo_type = q.memo_type.clone();
+            sq.semantic_weight = 1.0;
+            sq.keyword_weight = 0.0;
+            sq.query_embedding = q.query_embedding.clone();
+            if sq.query_embedding.is_none() {
+                let emb = self.embedder.embed(&q.text)?;
+                sq.query_embedding = Some(emb);
+            }
+            qs.push(sq);
+        }
+        self.store.search_batch(&qs)
+    }
+
     /// Consolidate: raise (or lower) a memory's importance, clamped to [0,1].
     pub fn consolidate(&self, id: &MemoId, delta: f32) -> Result<()> {
         let mut m = self
@@ -371,7 +407,7 @@ impl MemoryController {
         let mut sq = SearchQuery::new(text);
         sq.top_k = self.cfg.candidate_top_k;
         sq.semantic_weight = 0.7;
-        sq.keyword_weight = 0.3;
+        sq.keyword_weight = 0.5;
         if sq.query_embedding.is_none() {
             sq.query_embedding = Some(self.embedder.embed(text)?);
         }
@@ -407,7 +443,7 @@ impl MemoryController {
         let mut sq = SearchQuery::new(memo.content.clone());
         sq.top_k = self.cfg.candidate_top_k + 1;
         sq.semantic_weight = 0.7;
-        sq.keyword_weight = 0.3;
+        sq.keyword_weight = 0.5;
         sq.query_embedding = memo.embedding.clone();
         let mut cands = self.store.search(&sq)?;
         cands.retain(|s| s.memo.id != memo.id);

@@ -9,7 +9,7 @@
 - 记忆条目 CRUD：`add` / `get` / `update` / `forget`。
 - 本地嵌入：ngram + 哈希/TF-IDF 向量表示，余弦相似度；可注入自定义 `Embedder`。
 - 持久化：嵌入式 SQLite（rusqlite bundled），自动建表/迁移/索引、批量写入。
-- 检索：两条入口 —— `search` 为语义（向量余弦）+ 关键词（LIKE）**混合**打分（支持 top-k 与阈值）；`recall` 为**纯向量（余弦-only）**召回，按 query 与记忆的余弦相似度排序（keyword 权重为 0）。
+- 检索：两条入口 —— `search` 为语义（向量余弦）+ 词法（FTS5 `bm25()`）**混合**打分（支持 top-k 与阈值；词法命中经 FTS5 候选下推，仅对候选集做内存精排，否则全表扫描保语义召回）；`recall` 为**纯向量（余弦-only）**召回，按 query 与记忆的余弦相似度排序（keyword 权重为 0）。批量入口 `search_batch`/`recall_batch`：一次持锁对多个 query 评分（见 §2.3）。
 - 记忆管理：`consolidate`（巩固：提升重要性/合并）、`dedup`（去重：相似度阈值合并）。
 - 生命周期：分层老化、重要性衰减、遗忘（默认硬删除，预留软删除标记）。
 - 统一错误 `MemoError`；可选 CLI（add/get/search/list/forget）。
@@ -68,9 +68,10 @@ pub struct SearchQuery {
     pub text: String,
     pub top_k: usize,
     pub semantic_weight: f32,   // [0,1]，与 keyword_weight 可不全为 0，和不必为 1
-    pub keyword_weight: f32,    // [0,1]
+    pub keyword_weight: f32,    // [0,1]；默认 0.5（经 `SearchQuery::new` 构造）
     pub score_threshold: f32,
     pub memo_type: Option<MemoType>,
+    pub query_embedding: Option<Vec<f32>>, // 预置 query 向量可跳过 embedder
 }
 
 pub struct ScoredMemo { pub memo: Memo, pub score: f32 }
@@ -87,7 +88,7 @@ pub struct RecallQuery {
 ```
 
 ### 2.2 trait（memo-core）
-- `MemoStore`：`add` / `get` / `update` / `forget` / `search`。
+- `MemoStore`：`add` / `get` / `update` / `forget` / `search` / `search_batch`（默认方法：逐条调 `search`，`SqliteStore` 持锁循环 `search_inner` 实现批量）。
 - `Embedder`：`fn embed(&self, text: &str) -> Result<Vec<f32>, MemoError>`。
 - `StorageBackend`：`open` / `migrate` / 原始 CRUD（抽象，供复制后端扩展）。
 - 纯向量召回 `recall` 是 `MemoManager` 方法（复用 `search` 的存储层，令
@@ -100,6 +101,8 @@ pub struct RecallQuery {
 - `update(id, patch: MemoPatch) -> Result<()>`（content 变更时重算 embedding、version+1）
 - `forget(id) -> Result<bool>`（返回是否删除成功；默认硬删除）
 - `search(query) -> Result<Vec<ScoredMemo>>`（语义+关键词混合，过滤 deleted）
+- `search_batch(queries: &[SearchQuery]) -> Result<Vec<Vec<ScoredMemo>>>`：批量混合检索，逐条 embed（已预置 `query_embedding` 则跳过）后一次持锁评分，返回与输入等长的结果组。
+- `recall_batch(queries: &[RecallQuery]) -> Result<Vec<Vec<ScoredMemo>>>`：批量纯向量召回（内部构造 `semantic_weight=1`/`keyword_weight=0` 的 `SearchQuery` 经 `search_batch`）。
 - `recall(query: RecallQuery) -> Result<Vec<ScoredMemo>>`：**纯向量语义召回**，
   嵌入 query 文本后按余弦相似度排序（keyword 权重为 0）；`query.query_embedding`
   已预置时跳过 embedder。`search` 为混合检索，`recall` 为纯向量，二者区分明确。
@@ -111,6 +114,8 @@ pub struct RecallQuery {
 - `memo search --text "..." --top-k 5`
 - `memo list [--type ...] [--json]`：新增 `--json` 开关，输出机器可读 JSON 数组（每项含 `id`/`memo_type`/`content`/`importance`/`version`/`metadata`），默认人类可读输出不变（向后兼容）。
 - `memo search --text "..." --top-k 5 [--json]`：新增 `--json` 开关，输出 JSON 数组（每项含 `score`/`id`/`content`/`memo_type`），默认 `score\tcontent` 逐行输出不变。
+- `memo search-batch --text "q1" --text "q2" [--top-k 5] [--json]`：批量混合检索，重复 `--text` 逐个传入 query；默认逐 query 输出 `score\tcontent`，`--json` 输出二维数组（外层 per-query、内层 `score`/`id`/`content`/`memo_type`）。
+- `memo bench --size N --top-k K --warmup W [--batch] [--json]`：新增 `--batch` 开关，在单查询基准之外额外测量「单次锁内批量检索」吞吐（`report["batch"]` 含 `total_ms` / `ops_per_sec`）；其余 JSON 形态不变。
 - `memo recall --text "..." --top-k 5`：纯向量召回，输出 `score\tcontent` 逐行；`memo recall --text "..." --top-k 5 --json`：输出 JSON 数组（含 `score`/`id`/`content`/`memo_type`），与 `search` 形态一致。
 - `memo update --id <id> [--content "..."] [--type ...] [--importance 0.8]`：按 id 更新记忆（内容变更自动重算 embedding、version+1），至少一项非空；缺失 id / 空 patch / 非法类型或 importance 走 `MemoError`。供 HaluMem 操作级评测。
 - `memo forget --id <id>`
@@ -216,6 +221,14 @@ pub fn graph_bfs(
 
 主键：`(from_id, to_id, kind)`（同一方向同种边唯一；对称视图双向各一条）。
 索引：`idx_relations_from`（from_id, kind）、`idx_relations_to`（to_id）。
+
+`memories_fts` 表（M5，FTS5 全文索引，用于词法 BM25 候选下推；随 add/update/forget 同步，`migrate` 幂等回填）：
+| 列 | 类型 | 约束 |
+|----|------|------|
+| content | TEXT | 全文索引列（记忆内容） |
+| mem_id | TEXT | UNINDEXED，记忆 id（独立表，避免 FTS5 external-content 的 rowid/TEXT-id 映射） |
+
+说明：独立 `memories_fts` 表（非 external-content），`mem_id` 标记为 `UNINDEXED`；`add` 插入后同步写一行，`update` 先删后插，`forget` 删除对应行，`migrate` 以 `id NOT IN (SELECT mem_id FROM memories_fts)` 幂等回填旧数据。检索时仅当 `keyword_weight>0` 且 query 非空，才用 FTS5 `MATCH` + `bm25()` 取 `top_k*5 max 50` 命中点作候选集（CJK/标点 token 丢弃，回退全表扫描）；候选集内再做 Rust 内存余弦精排，词法命中更早剪枝候选。
 
 ## 4. 异常（MemoError，thiserror）
 

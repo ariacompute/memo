@@ -18,6 +18,12 @@ pub trait MemoStore: Send + Sync {
     /// Hybrid retrieval (semantic + keyword).
     fn search(&self, query: &SearchQuery) -> Result<Vec<ScoredMemo>>;
 
+    /// Batch hybrid retrieval. Default loops `search` per query; storage backends
+    /// may override to hold a single connection lock and reuse FTS5 prep.
+    fn search_batch(&self, queries: &[SearchQuery]) -> Result<Vec<Vec<ScoredMemo>>> {
+        queries.iter().map(|q| self.search(q)).collect()
+    }
+
     /// List memories (optionally filtered by type); used by consolidation/dedup/CLI.
     fn list(&self, memo_type: Option<MemoType>) -> Result<Vec<Memo>>;
 

@@ -11,10 +11,10 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 
 ## 目录
 - crates/core：Memo 模型、MemoError、MemoStore/Embedder/StorageBackend trait
-- crates/storage：rusqlite 后端（建表/迁移/索引/CRUD/批量写入）+ 复制后端占位
+- crates/storage：rusqlite 后端（建表/迁移/索引/CRUD/批量写入；FTS5 全文索引 `memories_fts` 用于词法 BM25 候选下推，随 add/update/forget 同步）+ 复制后端占位
 - crates/embed：ngram+哈希/TF-IDF 向量 embedder + 余弦相似度
-- crates/memo：manager(增删改查/检索(search 混合[语义+词法 BM25-lite] + recall 纯向量)/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘) + MemoryController + RelationScorer（write→connect 推断四视图边 / retrieve→assess→expand 有界图遍历，附带可检视 RetrieveTrace；默认 LocalRelationScorer 离线）
-- crates/cli：`add/get/search/recall/list/update/forget/bench` + 自管理 `setup`(`--status`/`--clear`，交互选择 GitHub/Gitee 升级源) 与 `upgrade [version]`(`--url` 可选覆盖) ；`--version`/`-v` 打印版本（list/search 支持 `--json` 机器可读输出）。关系平面子命令：`connect`(按 id 推断四视图边) / `relate`(手动建边) / `relations`(列边 by from/to/kind) / `graph`(有界多关系遍历，views/budget/max_hops/top_k，--json 输出含 RetrieveTrace)；`search --graph` 等价开启图感知检索。
+- crates/memo：manager(增删改查/检索(search 混合[语义余弦 + FTS5 BM25 词法候选下推] + recall 纯向量 + search_batch/recall_batch 批量检索)/巩固/去重/遗忘) + lifecycle(分层/衰减/遗忘) + MemoryController + RelationScorer（write→connect 推断四视图边 / retrieve→assess→expand 有界图遍历，附带可检视 RetrieveTrace；默认 LocalRelationScorer 离线）
+- crates/cli：`add/get/search/recall/search-batch/list/update/forget/bench` + 自管理 `setup`(`--status`/`--clear`，交互选择 GitHub/Gitee 升级源) 与 `upgrade [version]`(`--url` 可选覆盖) ；`--version`/`-v` 打印版本（list/search/search-batch 支持 `--json` 机器可读输出）。`bench` 增 `--batch`（单次锁内批量检索吞吐）。关系平面子命令：`connect`(按 id 推断四视图边) / `relate`(手动建边) / `relations`(列边 by from/to/kind) / `graph`(有界多关系遍历，views/budget/max_hops/top_k，--json 输出含 RetrieveTrace)；`search --graph` 等价开启图感知检索。
 - benches/：Python 评测编排（Track A 微基准+合成检索；Track B 四基准 locomo_refined/halumem/longmemeval/personamem）
 - docs/：compare.md 功能矩阵、bench_results.md 结果说明
 - 根：AGENTS.md / requirements.md / task.md / README.md
@@ -36,6 +36,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - M2：功能对比 + Track A/B 评测；验收见 requirements.md §6.7。
 - M3：Track B 四基准真实评测管线（locomo_refined/halumem/longmemeval/personamem）；CLI 增 `update` 与 `list/search --json` 供 HaluMem 操作级评测；judge 可选（缺凭据 skip 不伪造分数）。详见 task.md M3。
 - M4：多关系记忆平面（Jev-Mem 启发）。已落地（commit `13ab4ec`）：`memo-core` 增加 `RelationKind`/`Relation`/`GraphRetrieveQuery`/`RetrieveTrace`/`GraphRetrieveResult` 与 `graph_bfs`；`MemoStore` 扩展 `add_relation`/`get_relations`/`delete_relations`/`expand`；`storage/sqlite` 新增独立 `relations` 表 + 四视图 CRUD 与有界 BFS `expand`；`memo` 新增 `MemoryController` + `RelationScorer`（默认 `LocalRelationScorer` 离线）；CLI 新增 `connect`/`relate`/`relations`/`graph` 与 `search --graph`。零网络依赖，可插拔 LLM scorer。详见 requirements.md §1.3 / §2.5–§2.8 / task.md M4。
+- M5：检索优化（FTS5 词法下推 + 批量检索）。已落地：`keyword_weight` 默认 `0.3 → 0.5`（词法命中更早剪枝候选）；rusqlite 启用 `fts5` feature，`memories_fts` 独立 FTS5 表（add/update/forget/migrate 回填同步）；`search` 重写为「FTS5 `bm25()` 候选下推 + Rust 内存余弦精排」，词法命中时仅对候选集打分、否则全表扫描保语义召回；`MemoStore` 增 `search_batch` 默认方法，`MemoManager` 增 `search_batch`/`recall_batch`，CLI 增 `search-batch` 子命令与 `bench --batch` 吞吐埋点。详见 requirements.md §1.1 / §2.2 / §2.3 / §2.4 / §3 / task.md M5。
 
 ## 注意事项
 - 黄金路径：add → embed → 持久化 → search/recall → retrieve 端到端单测。
@@ -47,3 +48,4 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - `data/fixtures/<bench>/` 为内置合成样例（仅供单测/冒烟），报告标注 `dataset_source: fixture`，不可与正式基准分数直接对比。
 - requirements.md 须经人工逐项审核后方可据其生成 task.md。
 - 关系平面（M4）：`relations` 存于独立表，绝不改动 `Memo`；边为四视图有向边（semantic/temporal/causal/entity），默认 scorer 离线（semantic=cosine / temporal=时间序 / entity=token Jaccard / causal=时间邻+重叠），阈值/候选数/每写最大边数由 `RelationConfig` 控制；`connect` 须待记忆已持久化（write→connect 顺序），返回建边数；自环、越界 score（非 [0,1]）、空 provenance 经 `Relation::validate` 拒绝；`delete_relations` 至少需一个过滤条件否则 `InvalidParam`；`graph_bfs` 按 0.9/hop 衰减、按 budget 封顶、去环。
+- 检索优化（M5）：`search` 的词法粗排经 FTS5 `memories_fts` 下推（独立表、`mem_id UNINDEXED`，随 add/update/forget 同步、`migrate` 幂等回填），仅对 FTS5 命中候选集做 Rust 内存余弦精排，否则全表扫描保语义召回；`keyword_weight` 默认 `0.5`（语义 `0.7`）。CJK/标点 token 在 FTS5 中丢弃并回退全表，不影响语义检索。批量入口 `search_batch`/`recall_batch`（CLI `search-batch`、`bench --batch`）持单锁评分，不引入新依赖。

@@ -140,8 +140,52 @@ pub fn forget(manager: &MemoManager, id: &str) -> Result<String> {
     })
 }
 
+/// Batch hybrid search over multiple queries (one per entry in `queries`).
+pub fn search_batch(
+    manager: &MemoManager,
+    queries: &[String],
+    top_k: usize,
+    as_json: bool,
+) -> Result<String> {
+    let sqs: Vec<SearchQuery> = queries
+        .iter()
+        .map(|t| {
+            let mut q = SearchQuery::new(t.clone());
+            q.top_k = top_k;
+            q
+        })
+        .collect();
+    let results = manager.search_batch(&sqs)?;
+    if as_json {
+        let arr: Vec<serde_json::Value> = results
+            .iter()
+            .enumerate()
+            .map(|(i, rs)| {
+                serde_json::json!({
+                    "query": queries[i],
+                    "results": rs
+                        .iter()
+                        .map(|s| serde_json::json!({"id": s.memo.id, "score": s.score, "content": s.memo.content}))
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect();
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+    }
+    let lines: Vec<String> = results
+        .iter()
+        .enumerate()
+        .flat_map(|(i, rs)| {
+            let mut out = vec![format!("# query {}: {}", i, queries[i])];
+            out.extend(rs.iter().map(|s| format!("{:.3}\t{}", s.score, s.memo.content)));
+            out
+        })
+        .collect();
+    Ok(lines.join("\n"))
+}
+
 /// In-process micro-benchmark: add / search, output as JSON (parsed by the `benches/` Python scripts).
-pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize) -> Result<String> {
+pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize, batch: bool) -> Result<String> {
     if size == 0 {
         return Err(memo_core::MemoError::InvalidParam(
             "bench size must be > 0".into(),
@@ -191,7 +235,7 @@ pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize) ->
 
     let add_sum: f64 = add_ms.iter().sum();
     let search_sum: f64 = search_ms.iter().sum();
-    let report = serde_json::json!({
+    let mut report = serde_json::json!({
         "system": "aria-memo",
         "includes_network": false,
         "offline": true,
@@ -209,6 +253,26 @@ pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize) ->
             "ops_per_sec": if search_sum > 0.0 { (size as f64) / (search_sum / 1000.0) } else { 0.0 },
         },
     });
+    // Optional: batch retrieval throughput (single lock, all queries at once).
+    if batch {
+        let batch_queries: Vec<SearchQuery> = (0..size)
+            .map(|i| {
+                let mut q = SearchQuery::new(queries[i % queries.len()]);
+                q.top_k = top_k;
+                q
+            })
+            .collect();
+        for _ in 0..warmup {
+            let _ = manager.search_batch(&batch_queries);
+        }
+        let t0 = std::time::Instant::now();
+        let _ = manager.search_batch(&batch_queries)?;
+        let batch_ms = t0.elapsed().as_secs_f64() * 1000.0;
+        report["batch"] = serde_json::json!({
+            "total_ms": batch_ms,
+            "ops_per_sec": if batch_ms > 0.0 { (size as f64) / (batch_ms / 1000.0) } else { 0.0 },
+        });
+    }
     Ok(report.to_string())
 }
 
@@ -464,7 +528,7 @@ mod tests {
     #[test]
     fn cli_bench_json_smoke() {
         let m = mgr();
-        let out = bench(&m, 8, 3, 1).unwrap();
+        let out = bench(&m, 8, 3, 1, false).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["system"], "aria-memo");
         assert!(v["add"]["p50_ms"].as_f64().unwrap() >= 0.0);
@@ -474,13 +538,13 @@ mod tests {
     #[test]
     fn cli_bench_rejects_zero_size() {
         let m = mgr();
-        assert!(bench(&m, 0, 5, 0).is_err());
+        assert!(bench(&m, 0, 5, 0, false).is_err());
     }
 
     #[test]
     fn cli_bench_rejects_zero_topk() {
         let m = mgr();
-        assert!(bench(&m, 5, 0, 0).is_err());
+        assert!(bench(&m, 5, 0, 0, false).is_err());
     }
 
     #[test]

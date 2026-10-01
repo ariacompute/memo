@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS relations (
 );
 CREATE INDEX IF NOT EXISTS idx_relations_from ON relations(from_id, kind);
 CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_id);
+
+-- FTS5 full-text index over memory content for lexical (BM25) candidate
+-- pushdown. Kept as a standalone table (mem_id UNINDEXED) and synced on
+-- add/update/forget to avoid FTS5 external-content rowid/TEXT-id mapping.
+CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, mem_id UNINDEXED);
 ";
 
 /// Embedded SQLite memory storage backend.
@@ -184,6 +189,14 @@ impl SqliteStore {
     pub fn migrate(&self) -> Result<()> {
         let conn = self.conn.lock().expect("sqlite lock poisoned");
         conn.execute_batch(SCHEMA).map_err(db_err)?;
+        // Backfill FTS5 for any memories not yet indexed (idempotent; safe on fresh DBs).
+        conn.execute(
+            "INSERT INTO memories_fts(content, mem_id) \
+             SELECT content, id FROM memories WHERE deleted=0 \
+             AND id NOT IN (SELECT mem_id FROM memories_fts)",
+            [],
+        )
+        .map_err(db_err)?;
         Ok(())
     }
 
@@ -205,6 +218,12 @@ impl SqliteStore {
                 m.created_at,
                 m.updated_at
             ],
+        )
+        .map_err(db_err)?;
+        // Keep the FTS5 lexical index in sync with the stored content.
+        conn.execute(
+            "INSERT INTO memories_fts(content, mem_id) VALUES (?1, ?2)",
+            params![m.content, m.id],
         )
         .map_err(db_err)?;
         Ok(())
@@ -284,6 +303,14 @@ impl MemoStore for SqliteStore {
             ],
         )
         .map_err(db_err)?;
+        // Re-sync the FTS5 lexical index after a content change.
+        conn.execute("DELETE FROM memories_fts WHERE mem_id=?1", [m.id.clone()])
+            .map_err(db_err)?;
+        conn.execute(
+            "INSERT INTO memories_fts(content, mem_id) VALUES (?1, ?2)",
+            params![m.content, m.id],
+        )
+        .map_err(db_err)?;
         Ok(())
     }
 
@@ -294,6 +321,8 @@ impl MemoStore for SqliteStore {
                 "DELETE FROM memories WHERE id=?1 AND deleted=0",
                 [id.clone()],
             )
+            .map_err(db_err)?;
+        conn.execute("DELETE FROM memories_fts WHERE mem_id=?1", [id.clone()])
             .map_err(db_err)?;
         Ok(n > 0)
     }
@@ -322,46 +351,17 @@ impl MemoStore for SqliteStore {
     }
 
     fn search(&self, q: &SearchQuery) -> Result<Vec<ScoredMemo>> {
-        q.validate()?;
         let conn = self.conn.lock().expect("sqlite lock poisoned");
-        let mut sql = String::from(
-            "SELECT id, memo_type, content, embedding, metadata, importance, version, created_at, updated_at \
-             FROM memories WHERE deleted=0",
-        );
-        let mut strs: Vec<String> = Vec::new();
-        if let Some(t) = &q.memo_type {
-            sql.push_str(" AND memo_type=?");
-            strs.push(t.as_str());
-        }
-        sql.push_str(" ORDER BY updated_at DESC");
-        let mut stmt = conn.prepare(&sql).map_err(db_err)?;
-        let rows = stmt
-            .query_map(rusqlite::params_from_iter(strs.iter()), row_to_memo)
-            .map_err(db_err)?;
-        let mut candidates: Vec<Memo> = Vec::new();
-        for r in rows {
-            candidates.push(r.map_err(db_err)?);
-        }
-        drop(stmt);
-        drop(conn);
+        search_inner(&conn, q)
+    }
 
-        let query_emb = q.query_embedding.as_deref();
-        let mut scored: Vec<ScoredMemo> = candidates
-            .into_iter()
-            .map(|m| {
-                let semantic = match (query_emb, m.embedding.as_deref()) {
-                    (Some(a), Some(b)) => cosine(a, b).unwrap_or(0.0),
-                    _ => 0.0,
-                };
-                let keyword = lexical_relevance(&m.content, &q.text);
-                let score = q.semantic_weight * semantic + q.keyword_weight * keyword;
-                ScoredMemo { memo: m, score }
-            })
-            .filter(|r| r.score >= q.score_threshold)
-            .collect();
-        scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        scored.truncate(q.top_k);
-        Ok(scored)
+    fn search_batch(&self, queries: &[SearchQuery]) -> Result<Vec<Vec<ScoredMemo>>> {
+        let conn = self.conn.lock().expect("sqlite lock poisoned");
+        let mut out = Vec::with_capacity(queries.len());
+        for q in queries {
+            out.push(search_inner(&conn, q)?);
+        }
+        Ok(out)
     }
 
     fn add_batch(&self, memories: &[Memo]) -> Result<()> {
@@ -542,6 +542,104 @@ impl MemoStore for SqliteStore {
             hits: items.len(),
         };
         Ok(GraphRetrieveResult { items, trace })
+    }
+}
+
+/// Lexical (BM25) candidate pushdown via FTS5 + in-Rust cosine re-rank.
+///
+/// When `keyword_weight > 0` and the query text is non-empty, a FTS5 `MATCH`
+/// narrows the candidate set to the top lexical hits (cheap, server-side), and
+/// only that small set is scored in Rust (cosine semantic + normalized BM25).
+/// Otherwise (pure semantic, or FTS5 found nothing) it falls back to a full
+/// scan so semantic recall is preserved.
+fn search_inner(conn: &Connection, q: &SearchQuery) -> Result<Vec<ScoredMemo>> {
+    q.validate()?;
+
+    // 1) Lexical candidate pushdown via FTS5: use BM25 to pick the top lexical
+    // candidates (cheap, server-side). The keyword score is still computed by
+    // `lexical_relevance` below, preserving its phrase/2-gram semantics.
+    let mut candidate_ids: Vec<String> = Vec::new();
+    let use_lexical = q.keyword_weight > 0.0 && !q.text.trim().is_empty();
+    if use_lexical {
+        let match_expr = fts5_match_expr(&q.text);
+        let limit = ((q.top_k * 5) as i64).max(50);
+        let sql = "SELECT mem_id FROM memories_fts \
+                   WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts) LIMIT ?";
+        if let Ok(mut stmt) = conn.prepare(sql) {
+            if let Ok(rows) = stmt.query_map(params![match_expr, limit], |row| {
+                let mem_id: String = row.get(0)?;
+                Ok(mem_id)
+            }) {
+                for id in rows.flatten() {
+                    candidate_ids.push(id);
+                }
+            }
+        }
+    }
+
+    // 2) Fetch candidates (pruned by FTS5 when available, else full scan).
+    let mut sql = String::from(
+        "SELECT id, memo_type, content, embedding, metadata, importance, version, created_at, updated_at \
+         FROM memories WHERE deleted=0",
+    );
+    let mut binds: Vec<String> = Vec::new();
+    if let Some(t) = &q.memo_type {
+        sql.push_str(" AND memo_type=?");
+        binds.push(t.as_str().to_string());
+    }
+    let candidates: Vec<Memo> = if use_lexical && !candidate_ids.is_empty() {
+        let placeholders = vec!["?"; candidate_ids.len()].join(",");
+        sql.push_str(&format!(" AND id IN ({})", placeholders));
+        for id in &candidate_ids {
+            binds.push(id.clone());
+        }
+        let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), row_to_memo)
+            .map_err(db_err)?;
+        rows.map(|r| r.map_err(db_err)).collect::<Result<Vec<_>>>()?
+    } else {
+        let mut stmt = conn.prepare(&sql).map_err(db_err)?;
+        let rows = stmt
+            .query_map(rusqlite::params_from_iter(binds.iter()), row_to_memo)
+            .map_err(db_err)?;
+        rows.map(|r| r.map_err(db_err)).collect::<Result<Vec<_>>>()?
+    };
+
+    // 3) Score only the (pruned) candidate set: cosine semantic + normalized BM25 lexical.
+    let query_emb = q.query_embedding.as_deref();
+    let mut scored: Vec<ScoredMemo> = candidates
+        .into_iter()
+        .map(|m| {
+            let semantic = match (query_emb, m.embedding.as_deref()) {
+                (Some(a), Some(b)) => cosine(a, b).unwrap_or(0.0),
+                _ => 0.0,
+            };
+            let keyword = lexical_relevance(&m.content, &q.text);
+            let score = q.semantic_weight * semantic + q.keyword_weight * keyword;
+            ScoredMemo { memo: m, score }
+        })
+        .filter(|r| r.score >= q.score_threshold)
+        .collect();
+    scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+    scored.truncate(q.top_k);
+    Ok(scored)
+}
+
+/// Build an FTS5 MATCH expression: each alphanumeric term is a quoted token
+/// OR-joined, so a document need only contain any query term to be a lexical
+/// candidate. CJK / punctuation is dropped (the fallback path still scores it).
+fn fts5_match_expr(text: &str) -> String {
+    let terms: Vec<String> = text
+        .to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|s| !s.is_empty())
+        .map(|t| format!("\"{}\"", t.replace('"', "")))
+        .collect();
+    if terms.is_empty() {
+        format!("\"{}\"", text.trim().replace('"', ""))
+    } else {
+        terms.join(" OR ")
     }
 }
 

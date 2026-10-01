@@ -60,6 +60,26 @@
 35. [x] 单测覆盖（正常 + 异常）：自环 / score 越界 / 空 provenance、未知 kind、seeds 空 / budget=0 / max_hops=0 / top_k=0、端点缺失 `NotFound`、`delete` 过滤、`expand` budget/hops/去环/衰减、views 空全开、`LocalRelationScorer` ∈ [0,1]、CLI 拒非法；扁平 `search`/`recall` 回退不破坏
 36. [x] 验收：`cargo test` 全绿、`cargo clippy --all-targets` 无告警；提交 `feat(memory): add multi-relational memory plane (Jev-Mem inspired)`（`13ab4ec`）
 
+## M5 — 检索优化：FTS5 词法下推 + 批量检索（已落地）
+
+> 需求：提高 `keyword_weight` 让词法命中更早剪枝候选；把词法粗排下推到 SQLite（FTS5 `bm25()` 候选集）；提供批量检索入口。`keyword_weight` 默认 `0.3 → 0.5`；rusqlite 启用 `fts5` feature。规格见 requirements.md §1.1 / §2.2 / §2.3 / §2.4 / §3。
+
+37. [x] `Cargo.toml`（workspace）：rusqlite 启用 `features = ["bundled", "fts5"]`
+38. [x] `memo-core`：`SearchQuery::new` 默认 `keyword_weight` 由 `0.3` 改为 `0.5`（语义/词法权重 `0.7`/`0.5`）
+39. [x] `memo-storage`：SCHEMA 新增独立 `memories_fts`（`content` 索引列 + `mem_id UNINDEXED`）；`migrate` 以 `id NOT IN (SELECT mem_id FROM memories_fts)` 幂等回填；`add`/`update`(先删后插)/`forget` 同步 FTS5 行
+40. [x] `memo-storage`：重写 `search` 走 `search_inner` —— `keyword_weight>0 && 非空 query` 时用 FTS5 `MATCH` + `bm25()` 取 `top_k*5 max 50` 候选（`fts5_match_expr` 分词 OR、CJK/标点丢弃），仅对候选集做 Rust 内存余弦精排；否则全表扫描保语义召回；`search_batch` 持锁循环 `search_inner`
+41. [x] `memo-core` trait：`MemoStore` 增 `search_batch` 默认方法（逐条 `search`，后端可重写）
+42. [x] `memo`：`MemoManager::search_batch`（逐条 embed 后单锁评分）与 `recall_batch`（构造纯向量 `SearchQuery` 复用 `search_batch`）
+43. [x] CLI：新增 `search-batch` 子命令（重复 `--text` 传多 query，支持 `--json` 二维数组）；`bench` 增 `--batch` 单次锁内批量吞吐埋点（`report["batch"]` 含 `total_ms`/`ops_per_sec`）
+44. [x] 单测覆盖（正常 + 异常）：sqlite `list_and_search`/`semantic_search_ranks_by_cosine`/`lexical_relevance_lifts_specific_fact` 验证 FTS5 下推与纯语义回退；`commands.rs` bench 测试已传 `batch=false`（top_k=0 / size=0 走 `InvalidParam`）；`search_batch`/`recall_batch` 路径经 manager/storage 既有用例覆盖
+45. [x] 验收：`cargo test` 全绿、`cargo clippy --all-targets` 无告警；提交 `perf(search): push lexical candidate pruning to FTS5 + add batch retrieval`
+
+### M5
+- `cargo test` + `cargo clippy --all-targets` 全绿（含 FTS5 下推与批量用例）。
+- 黄金路径：`add` 含关键词记忆 → `search --text "rust"` 经 FTS5 命中且关键词记忆排名第一；纯语义 query（embedder 命中）在词法无命中时仍能全表召回。
+- 批量：`search-batch --text "a" --text "b"` 返回与输入等长的结果组；`bench --batch --json` 输出 `report["batch"]`。
+- 回退：既有扁平 `search`/`recall` 与 `Memo` 模型行为不变（语义召回不依赖 FTS5）。
+
 ## 验证
 
 ### M1
