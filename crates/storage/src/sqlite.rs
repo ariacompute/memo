@@ -3,6 +3,9 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::path::Path;
 use std::sync::Mutex;
 
+use std::sync::OnceLock;
+use jieba_rs::{Jieba, TokenizeMode};
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS memories (
     id TEXT PRIMARY KEY,
@@ -35,6 +38,14 @@ CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_id);
 -- FTS5 full-text index over memory content for lexical (BM25) candidate
 -- pushdown. Kept as a standalone table (mem_id UNINDEXED) and synced on
 -- add/update/forget to avoid FTS5 external-content rowid/TEXT-id mapping.
+-- CJK word segmentation is performed in Rust via jieba-rs (dict-based, accurate
+-- Chinese word segmentation, embedded dictionary) before insert: content is
+-- pre-segmented into space-joined tokens and the default (unicode61) tokenizer
+-- indexes those tokens. This makes Chinese queries match sub-words instead of
+-- the whole run. The same segmenter is used on the query side in
+-- fts5_match_expr so indexed/query tokens align.
+-- (SQLite's built-in 'icu' tokenizer cannot be enabled in this bundled build,
+-- hence the pre-segmentation approach.)
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, mem_id UNINDEXED);
 ";
 
@@ -188,15 +199,57 @@ impl SqliteStore {
     /// Create tables and indexes.
     pub fn migrate(&self) -> Result<()> {
         let conn = self.conn.lock().expect("sqlite lock poisoned");
+        // One-time rebuild of the FTS5 index. Before user_version 3 the FTS index
+        // stored either raw content (CJK as one token) or icu_segmenter-pre-segmented
+        // tokens. After 3 it stores jieba-rs-pre-segmented tokens, so existing
+        // databases (user_version < 3) must drop and rebuild their FTS table once.
+        // `IF NOT EXISTS` in SCHEMA would otherwise leave the stale table in place.
+        let user_version: i64 = conn
+            .query_row("PRAGMA user_version", [], |row| row.get(0))
+            .map_err(db_err)?;
+        let rebuild = user_version < 3;
+        if rebuild {
+            conn.execute_batch("DROP TABLE IF EXISTS memories_fts;")
+                .map_err(db_err)?;
+        }
         conn.execute_batch(SCHEMA).map_err(db_err)?;
-        // Backfill FTS5 for any memories not yet indexed (idempotent; safe on fresh DBs).
-        conn.execute(
-            "INSERT INTO memories_fts(content, mem_id) \
-             SELECT content, id FROM memories WHERE deleted=0 \
-             AND id NOT IN (SELECT mem_id FROM memories_fts)",
-            [],
-        )
-        .map_err(db_err)?;
+        // Backfill FTS5 with pre-segmented tokens. After a rebuild we re-index
+        // everything; otherwise we only fill in memories not yet indexed.
+        let mut rows: Vec<(String, String)> = Vec::new();
+        {
+            let mut stmt = conn
+                .prepare("SELECT id, content FROM memories WHERE deleted=0")
+                .map_err(db_err)?;
+            let it = stmt
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .map_err(db_err)?;
+            for r in it {
+                rows.push(r.map_err(db_err)?);
+            }
+        }
+        for (id, content) in rows {
+            if !rebuild {
+                let indexed: bool = conn
+                    .query_row(
+                        "SELECT 1 FROM memories_fts WHERE mem_id=?1",
+                        [id.clone()],
+                        |_| Ok(true),
+                    )
+                    .optional()
+                    .map_err(db_err)?
+                    .is_some();
+                if indexed {
+                    continue;
+                }
+            }
+            conn.execute(
+                "INSERT INTO memories_fts(content, mem_id) VALUES (?1, ?2)",
+                params![fts5_index_text(&content), id],
+            )
+            .map_err(db_err)?;
+        }
+        conn.execute_batch("PRAGMA user_version=3;")
+            .map_err(db_err)?;
         Ok(())
     }
 
@@ -233,7 +286,7 @@ impl SqliteStore {
         // Keep the FTS5 lexical index in sync with the stored content.
         conn.execute(
             "INSERT INTO memories_fts(content, mem_id) VALUES (?1, ?2)",
-            params![m.content, m.id],
+            params![fts5_index_text(&m.content), m.id],
         )
         .map_err(db_err)?;
         Ok(())
@@ -318,7 +371,7 @@ impl MemoStore for SqliteStore {
             .map_err(db_err)?;
         conn.execute(
             "INSERT INTO memories_fts(content, mem_id) VALUES (?1, ?2)",
-            params![m.content, m.id],
+            params![fts5_index_text(&m.content), m.id],
         )
         .map_err(db_err)?;
         Ok(())
@@ -640,21 +693,63 @@ fn search_inner(conn: &Connection, q: &SearchQuery) -> Result<Vec<ScoredMemo>> {
     Ok(scored)
 }
 
-/// Build an FTS5 MATCH expression: each alphanumeric term is a quoted token
-/// OR-joined, so a document need only contain any query term to be a lexical
-/// candidate. CJK / punctuation is dropped (the fallback path still scores it).
+/// Pre-segment `text` into space-joined tokens for the FTS5 index.
+///
+/// SQLite's bundled build here cannot enable the built-in `icu` tokenizer, so we
+/// segment in Rust with `jieba-rs` (dict-based, accurate Chinese word
+/// segmentation, embedded dictionary) and store the space-joined tokens. The
+/// default `unicode61` tokenizer then indexes each token, giving Chinese
+/// sub-word recall. The same segmenter is used on the query side in
+/// `fts5_match_expr` so indexed/query tokens align. Punctuation/whitespace-only
+/// runs are dropped (see `is_index_term`).
+fn fts5_index_text(text: &str) -> String {
+    let tokens: Vec<&str> = jieba()
+        .tokenize(text, TokenizeMode::Default, true)
+        .into_iter()
+        .map(|t| t.word.trim())
+        .filter(|w| is_index_term(w))
+        .collect();
+    if tokens.is_empty() {
+        text.trim().to_string()
+    } else {
+        tokens.join(" ")
+    }
+}
+
+/// Build an FTS5 MATCH expression: each jieba word-segmented query token is a
+/// quoted token OR-joined, so a document need only contain any query term to be
+/// a lexical candidate (recall-biased pushdown). Using `jieba-rs` on the query
+/// side keeps tokens aligned with the pre-segmented index, so Chinese sub-words
+/// match correctly (replacing the old Rust `is_alphanumeric` split, which left
+/// whole CJK runs as a single non-matching token; and more accurate than the
+/// previous ICU4X segmenter, which mis-cut e.g. `香蕉` into `吃香 蕉`).
 fn fts5_match_expr(text: &str) -> String {
-    let terms: Vec<String> = text
-        .to_lowercase()
-        .split(|c: char| !c.is_alphanumeric())
-        .filter(|s| !s.is_empty())
-        .map(|t| format!("\"{}\"", t.replace('"', "")))
+    let terms: Vec<String> = jieba()
+        .tokenize(text, TokenizeMode::Default, true)
+        .into_iter()
+        .map(|t| t.word.trim().to_string())
+        .filter(|w| is_index_term(w))
+        .map(|w| format!("\"{}\"", w.replace('"', "")))
         .collect();
     if terms.is_empty() {
         format!("\"{}\"", text.trim().replace('"', ""))
     } else {
         terms.join(" OR ")
     }
+}
+
+/// A token worth indexing/matching: non-empty and containing at least one
+/// alphanumeric (incl. CJK ideographs) character, so pure punctuation/space runs
+/// are ignored.
+fn is_index_term(t: &str) -> bool {
+    !t.is_empty() && t.chars().any(|c| c.is_alphanumeric())
+}
+
+/// Process-wide `jieba-rs` instance. `Jieba::new()` loads the embedded
+/// dictionary (relatively heavy), so we build it exactly once and share it.
+fn jieba() -> &'static Jieba {
+    static INSTANCE: OnceLock<Jieba> = OnceLock::new();
+    INSTANCE.get_or_init(Jieba::new)
 }
 
 #[cfg(test)]
@@ -726,6 +821,77 @@ mod tests {
         let mut q2 = SearchQuery::new("rust");
         q2.memo_type = Some(MemoType::Working);
         assert!(s.search(&q2).unwrap().is_empty());
+    }
+
+    #[test]
+    fn chinese_keyword_search_segmented() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "用户喜欢用苹果手机拍照", Some(vec![0.9, 0.1])))
+            .unwrap();
+        s.add(&mem("b", "小明爱吃香蕉和橘子", Some(vec![0.1, 0.9])))
+            .unwrap();
+        // Sub-word recall: a single Chinese word must match via jieba-rs word
+        // segmentation, not the whole-run token the default tokenizer would have
+        // produced before pre-segmentation.
+        let mut q = SearchQuery::new("苹果");
+        q.semantic_weight = 0.0;
+        q.keyword_weight = 1.0;
+        let r = s.search(&q).unwrap();
+        assert!(!r.is_empty(), "chinese sub-word should match via jieba segmentation");
+        assert_eq!(r[0].memo.id, "a");
+        // The same for the other doc (uses a different word).
+        let mut qb = SearchQuery::new("橘子");
+        qb.semantic_weight = 0.0;
+        qb.keyword_weight = 1.0;
+        let rb = s.search(&qb).unwrap();
+        assert_eq!(rb[0].memo.id, "b");
+        // Regression: jieba-rs must cut `香蕉` as one token (the old ICU4X
+        // segmenter mis-cut it into `吃香 蕉`, so this query missed).
+        let mut qx = SearchQuery::new("香蕉");
+        qx.semantic_weight = 0.0;
+        qx.keyword_weight = 1.0;
+        let rx = s.search(&qx).unwrap();
+        assert!(!rx.is_empty(), "jieba must segment 香蕉 as a single token");
+        assert_eq!(rx[0].memo.id, "b");
+        // Multi-word OR: a query covering a word from each doc returns both.
+        let mut q2 = SearchQuery::new("苹果 橘子");
+        q2.semantic_weight = 0.0;
+        q2.keyword_weight = 1.0;
+        let ids: std::collections::HashSet<String> = s
+            .search(&q2)
+            .unwrap()
+            .iter()
+            .map(|m| m.memo.id.clone())
+            .collect();
+        assert!(ids.contains("a"));
+        assert!(ids.contains("b"));
+    }
+
+    #[test]
+    fn jieba_tokenizer_segmentation() {
+        // Accurate Chinese word segmentation: `香蕉` must be one token (the bug
+        // the ICU4X segmenter had — it cut `吃香 蕉`).
+        let words: Vec<&str> = jieba()
+            .tokenize("小明爱吃香蕉和橘子", TokenizeMode::Default, true)
+            .iter()
+            .map(|t| t.word)
+            .collect();
+        assert!(
+            words.contains(&"香蕉"),
+            "jieba should keep 香蕉 as a single token, got {words:?}"
+        );
+        // English: whole words preserved (mixed-language doc).
+        let en: Vec<&str> = jieba()
+            .tokenize("rust systems programming 香蕉", TokenizeMode::Default, true)
+            .iter()
+            .map(|t| t.word)
+            .collect();
+        assert!(en.contains(&"rust"));
+        assert!(en.contains(&"香蕉"));
+        // Punctuation/space-only runs are not index terms.
+        assert!(!is_index_term("，"));
+        assert!(!is_index_term("  "));
+        assert!(is_index_term("rust"));
     }
 
     #[test]
