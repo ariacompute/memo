@@ -796,4 +796,70 @@ mod tests {
         assert_eq!(parse_views("semantic,temporal").unwrap().len(), 2);
         assert!(parse_views("nonsense").is_err());
     }
+
+    #[test]
+    fn cli_search_batch_returns_aligned_results() {
+        let m = mgr();
+        add(&m, "working", "rust systems programming", 0.8).unwrap();
+        add(&m, "working", "banana smoothie recipe", 0.5).unwrap();
+        // Non-JSON form emits one header block per query.
+        let out = search_batch(
+            &m,
+            &["rust".to_string(), "banana".to_string()],
+            5,
+            false,
+        )
+        .unwrap();
+        assert!(out.contains("# query 0:"));
+        assert!(out.contains("# query 1:"));
+        // JSON form returns a per-query array.
+        let json: serde_json::Value = serde_json::from_str(
+            &search_batch(&m, &["rust".to_string(), "banana".to_string()], 5, true).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(json.as_array().unwrap().len(), 2);
+        assert_eq!(json[0]["query"], "rust");
+        assert!(!json[0]["results"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn cli_relations_top_k_limits() {
+        let m = mgr();
+        let a = add(&m, "working", "alpha about rust", 0.8).unwrap();
+        let b = add(&m, "working", "beta about rust", 0.8).unwrap();
+        let c = add(&m, "working", "gamma about rust", 0.8).unwrap();
+        relate(&m, &a, &b, "semantic", 0.9, Some("cli")).unwrap();
+        relate(&m, &a, &c, "semantic", 0.8, Some("cli")).unwrap();
+        let all = relations(&m, Some(&a), None, None, 50, true).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&all)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        // top_k=1 truncates to a single edge.
+        let limited = relations(&m, Some(&a), None, None, 1, true).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&limited)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn cli_graph_retrieve_view_filter() {
+        let m = mgr();
+        let _a = add(&m, "working", "user likes rust systems programming", 0.8).unwrap();
+        let b = add(&m, "working", "rust is used for systems programming by the user", 0.8).unwrap();
+        connect(&m, &b).unwrap();
+        // Restrict to the semantic view: a must still be reachable from b.
+        let g = graph_retrieve(&m, "rust programming", "semantic", 20, 3, 10, true).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&g).unwrap();
+        assert!(!v["items"].as_array().unwrap().is_empty());
+    }
 }

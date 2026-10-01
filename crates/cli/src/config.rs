@@ -121,4 +121,52 @@ mod tests {
     fn default_upgrade_url_is_github() {
         assert_eq!(default_upgrade_url(), DEFAULT_UPGRADE_URL_COM);
     }
+
+    // Serialize config tests that mutate ARIA_COMPUTE_HOME so they never race.
+    use std::sync::{Mutex, OnceLock};
+    fn config_serial() -> &'static Mutex<()> {
+        static L: OnceLock<Mutex<()>> = OnceLock::new();
+        L.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn memo_home_env_override() {
+        let _g = config_serial().lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("memo_home_{}", std::process::id()));
+        std::env::set_var("ARIA_COMPUTE_HOME", dir.to_str().unwrap());
+        let home = memo_home().unwrap();
+        assert_eq!(home, dir);
+        std::env::remove_var("ARIA_COMPUTE_HOME");
+    }
+
+    #[test]
+    fn save_load_clear_cli_config_roundtrip() {
+        let _g = config_serial().lock().unwrap();
+        let dir = std::env::temp_dir().join(format!("memo_cfg_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::env::set_var("ARIA_COMPUTE_HOME", dir.to_str().unwrap());
+        let cfg = MemoCliConfig {
+            upgrade_url: "https://gitee.com/ariacompute".into(),
+        };
+        let path = save_cli_config(&cfg).unwrap();
+        assert!(path.exists());
+        let loaded = load_cli_config().unwrap();
+        assert_eq!(loaded, cfg);
+        // clear removes the file.
+        let cleared = clear_cli_config().unwrap();
+        assert!(cleared.is_some());
+        assert!(!path.exists());
+        // A missing file loads the default (empty upgrade_url).
+        assert_eq!(load_cli_config().unwrap(), MemoCliConfig::default());
+        std::env::remove_var("ARIA_COMPUTE_HOME");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn default_upgrade_url_respects_site() {
+        assert_eq!(default_upgrade_url_for_site("cn"), DEFAULT_UPGRADE_URL_CN);
+        assert_eq!(default_upgrade_url_for_site("CN"), DEFAULT_UPGRADE_URL_CN);
+        assert_eq!(default_upgrade_url_for_site("com"), DEFAULT_UPGRADE_URL_COM);
+        assert_eq!(default_upgrade_url_for_site("github"), DEFAULT_UPGRADE_URL_COM);
+    }
 }

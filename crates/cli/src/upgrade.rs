@@ -559,4 +559,28 @@ mod tests {
         let got = resolve_upgrade_url(None);
         assert!(got.is_ok());
     }
+
+    #[test]
+    fn detect_host_routes_gitee_github_unsupported() {
+        assert_eq!(
+            detect_host("https://github.com/ariacompute").unwrap(),
+            ReleaseHost::GitHub
+        );
+        assert_eq!(
+            detect_host("https://gitee.com/ariacompute").unwrap(),
+            ReleaseHost::Gitee
+        );
+        // Unknown host (neither github nor gitee) is rejected.
+        assert!(detect_host("https://example.com/x").is_err());
+    }
+
+    #[test]
+    fn find_asset_missing_errors() {
+        let assets = vec![ReleaseAsset {
+            name: "a".into(),
+            download_url: "u".into(),
+        }];
+        assert!(find_asset(&assets, "b").is_err());
+        assert!(find_asset(&assets, "a").is_ok());
+    }
 }

@@ -896,4 +896,87 @@ mod tests {
         assert!(ctrl.retrieve("x", vec![], 10, 0, 10).is_err());
         assert!(ctrl.retrieve("x", vec![], 10, 3, 0).is_err());
     }
+
+    #[test]
+    fn search_batch_returns_results_per_query() {
+        let m = mgr();
+        m.add("rust systems programming", MemoType::Working, HashMap::new(), 0.8)
+            .unwrap();
+        m.add("banana smoothie recipe", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
+        let qs = vec![SearchQuery::new("rust"), SearchQuery::new("banana")];
+        let rs = m.search_batch(&qs).unwrap();
+        assert_eq!(rs.len(), 2);
+        assert!(rs[0].iter().any(|s| s.memo.content.contains("rust")));
+        assert!(rs[1].iter().any(|s| s.memo.content.contains("banana")));
+    }
+
+    #[test]
+    fn recall_batch_returns_results_per_query() {
+        let m = mgr();
+        m.add("rust systems programming", MemoType::Working, HashMap::new(), 0.8)
+            .unwrap();
+        m.add("banana smoothie recipe", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
+        let qs = vec![
+            RecallQuery::new("rust language"),
+            RecallQuery::new("banana smoothie"),
+        ];
+        let rs = m.recall_batch(&qs).unwrap();
+        assert_eq!(rs.len(), 2);
+        assert!(rs[0].iter().any(|s| s.memo.content.contains("rust")));
+        assert!(rs[1].iter().any(|s| s.memo.content.contains("banana")));
+    }
+
+    #[test]
+    fn update_metadata_only_bumps_version() {
+        let m = mgr();
+        let id = m.add("content stays", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        let mut meta = HashMap::new();
+        meta.insert("k".to_string(), "v".to_string());
+        m.update(
+            &id,
+            MemoPatch {
+                metadata: Some(meta.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let got = m.get(&id).unwrap().unwrap();
+        assert_eq!(got.content, "content stays");
+        assert_eq!(got.metadata, meta);
+        assert_eq!(got.version, 2);
+    }
+
+    #[test]
+    fn retrieve_empty_store_yields_no_seeds() {
+        let m = mgr();
+        let ctrl = MemoryController::with_defaults(m.embedder.clone(), m.store.clone());
+        // No memories -> hybrid search yields no seeds -> empty items, no-seeds trace.
+        let res = ctrl.retrieve("anything", vec![], 20, 3, 10).unwrap();
+        assert!(res.items.is_empty());
+        assert_eq!(res.trace.stop_reason, "no-seeds");
+        assert_eq!(res.trace.hits, 0);
+    }
+
+    #[test]
+    fn dedup_skips_when_embeddings_missing() {
+        let m = mgr();
+        // Without embeddings, cosine cannot run, so dedup must leave both untouched.
+        let no_emb = |id: &str, content: &str, imp: f32| Memo {
+            id: id.into(),
+            memo_type: MemoType::Working,
+            content: content.into(),
+            embedding: None,
+            metadata: HashMap::new(),
+            importance: imp,
+            version: 1,
+            created_at: 1,
+            updated_at: 1,
+        };
+        m.store.add(&no_emb("x1", "user likes rust", 0.9)).unwrap();
+        m.store.add(&no_emb("x2", "user likes rust", 0.4)).unwrap();
+        assert_eq!(m.dedup(0.95).unwrap(), 0);
+        assert_eq!(m.list(None).unwrap().len(), 2);
+    }
 }

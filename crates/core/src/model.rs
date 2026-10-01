@@ -683,6 +683,61 @@ mod tests {
         // empty query -> 0
         assert_eq!(lexical_relevance("anything", ""), 0.0);
     }
+
+    #[test]
+    fn tokenize_terms_cjk_bigrams_and_word_tokens() {
+        // Latin word tokens of length >= 2 are kept.
+        let en = tokenize_terms("hello world");
+        assert!(en.contains(&"hello".to_string()));
+        assert!(en.contains(&"world".to_string()));
+        // Single-char word token is dropped (len < 2).
+        let short = tokenize_terms("a b");
+        assert!(!short.contains(&"a".to_string()));
+        assert!(!short.contains(&"b".to_string()));
+        // CJK produces adjacent character 2-grams.
+        let cjk = tokenize_terms("用户编程");
+        assert!(cjk.contains(&"用户".to_string()));
+        assert!(cjk.contains(&"户编".to_string()));
+        assert!(cjk.contains(&"编程".to_string()));
+    }
+
+    #[test]
+    fn keyword_score_cjk_query_substring() {
+        // Pure CJK query not present -> 0.
+        assert_eq!(keyword_score("我喜欢苹果", "香蕉"), 0.0);
+        // CJK substring present -> 1.
+        assert_eq!(keyword_score("我喜欢苹果手机", "苹果"), 1.0);
+        // Mixed CJK query, one term present out of two -> 0.5.
+        assert!((keyword_score("苹果手机很好用", "苹果 香蕉") - 0.5).abs() < 1e-6);
+    }
+
+    #[test]
+    fn graph_bfs_respects_max_hops() {
+        // a -> b -> c; max_hops=1 must NOT reach c.
+        let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
+            let mut m = HashMap::new();
+            m.insert(
+                "a".into(),
+                vec![("b".into(), 0.9, RelationKind::Semantic)],
+            );
+            m.insert(
+                "b".into(),
+                vec![("c".into(), 0.9, RelationKind::Semantic)],
+            );
+            m
+        };
+        let (out, _) = graph_bfs(
+            &["a".into()],
+            &[],
+            10,
+            1,
+            |n| edges.get(n).cloned().unwrap_or_default(),
+        );
+        let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
+        assert!(ids.contains(&&"a".to_string()));
+        assert!(ids.contains(&&"b".to_string()));
+        assert!(!ids.contains(&&"c".to_string()));
+    }
 }
 
 #[cfg(test)]

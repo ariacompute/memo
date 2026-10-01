@@ -1252,4 +1252,89 @@ mod tests {
             Err(MemoError::InvalidParam(_))
         ));
     }
+
+    #[test]
+    fn get_relations_top_k_truncates_newest_first() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "x", None)).unwrap();
+        // Both endpoints must exist for add_relation to succeed.
+        for i in 0..5 {
+            s.add(&mem(&format!("t{i}"), "y", None)).unwrap();
+        }
+        for i in 0..5 {
+            s.add_relation(&rel(
+                "a",
+                &format!("t{i}"),
+                RelationKind::Semantic,
+                0.5,
+                i as i64,
+            ))
+            .unwrap();
+        }
+        // top_k=2 keeps only the two newest edges (created_at 4 then 3).
+        let rels = s.get_relations(Some(&"a".into()), None, None, 2).unwrap();
+        assert_eq!(rels.len(), 2);
+        assert_eq!(rels[0].to_id, "t4");
+        assert_eq!(rels[1].to_id, "t3");
+    }
+
+    #[test]
+    fn search_batch_default_loops_per_query() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "rust systems programming", Some(vec![0.9, 0.1])))
+            .unwrap();
+        s.add(&mem("b", "banana smoothie recipe", Some(vec![0.1, 0.9])))
+            .unwrap();
+        let qs = vec![SearchQuery::new("rust"), SearchQuery::new("banana")];
+        let rs = s.search_batch(&qs).unwrap();
+        assert_eq!(rs.len(), 2);
+        assert_eq!(rs[0][0].memo.id, "a");
+        assert_eq!(rs[1][0].memo.id, "b");
+    }
+
+    #[test]
+    fn expand_respects_view_filter_and_budget() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "x", None)).unwrap();
+        s.add(&mem("b", "y", None)).unwrap();
+        s.add(&mem("c", "z", None)).unwrap();
+        s.add_relation(&rel("a", "b", RelationKind::Semantic, 0.9, 1))
+            .unwrap();
+        s.add_relation(&rel("a", "c", RelationKind::Temporal, 0.9, 2))
+            .unwrap();
+        // View filter: semantic only -> temporal neighbor c excluded.
+        let q = GraphRetrieveQuery {
+            seeds: vec!["a".into()],
+            views: vec![RelationKind::Semantic],
+            budget: 10,
+            max_hops: 3,
+            top_k: 10,
+        };
+        let res = s.expand(&q).unwrap();
+        let ids: Vec<&MemoId> = res.items.iter().map(|i| &i.memo.id).collect();
+        assert!(ids.contains(&&"b".to_string()));
+        assert!(!ids.contains(&&"c".to_string()));
+        // Budget=1 -> only the seed is visited.
+        let q2 = GraphRetrieveQuery {
+            seeds: vec!["a".into()],
+            views: vec![],
+            budget: 1,
+            max_hops: 3,
+            top_k: 10,
+        };
+        let res2 = s.expand(&q2).unwrap();
+        assert_eq!(res2.items.len(), 1);
+        assert_eq!(res2.trace.stop_reason, "budget");
+    }
+
+    #[test]
+    fn segment_routes_mixed_japanese_chinese_to_japanese() {
+        // Kana present -> Japanese branch (lindera ipadic) wins over Chinese (han).
+        let toks = segment("私はリンゴが好きです and 苹果");
+        assert!(
+            toks.contains(&"リンゴ".to_string()),
+            "kana must route to lindera ja, got {toks:?}"
+        );
+        assert!(toks.contains(&"and".to_string()));
+    }
 }
