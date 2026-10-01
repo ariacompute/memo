@@ -19,7 +19,7 @@ cli(aria-memo) → memo(编排) → storage(SQLite) / embed(本地嵌入) → co
 混合检索融合语义（本地嵌入余弦）与词法（关键词）相关性：
 `score = semantic_weight·cosine + keyword_weight·lexical_relevance`。
 
-- **词法下推（FTS5）。** `memories.content` 由 SQLite FTS5 虚拟表 `memories_fts` 索引。混合查询时，存储层先在 *SQLite 内部* 跑 `MATCH` + `bm25()` 把候选集剪枝到词法命中最高的若干条，再仅对这小集合计算余弦——彻底消除了旧有的全表扫描。纯语义查询（或 FTS5 无词法命中）回退到全表扫描，保证召回不丢。**CJK 词级切分：** 由于本项目的 bundled SQLite 无法开启内置 `icu` 分词器，写入前会在 Rust 侧用 `jieba-rs`（基于词典、更准确的中文词切分，内嵌词典）对内容做词级切分，再交给 FTS5 索引；查询侧用同一分词器切分，因此中文子词也能命中（例如查询 `苹果` 可命中含 `用户喜欢用苹果手机拍照` 的文档，`香蕉` 也会被完整切成一个词），而不是把整段中文当成一个不可匹配的 token。FTS 索引在打开时通过 `PRAGMA user_version` 一次性重建，使已有数据库也用上切分后的 token。
+- **词法下推（FTS5）。** `memories.content` 由 SQLite FTS5 虚拟表 `memories_fts` 索引。混合查询时，存储层先在 *SQLite 内部* 跑 `MATCH` + `bm25()` 把候选集剪枝到词法命中最高的若干条，再仅对这小集合计算余弦——彻底消除了旧有的全表扫描。纯语义查询（或 FTS5 无词法命中）回退到全表扫描，保证召回不丢。**多语言词级切分：** 由于本项目的 bundled SQLite 无法开启内置 `icu` 分词器，写入前会在 Rust 侧做词级预切分、查询侧用同一 `segment` 逻辑切分，使子词命中而非整段当一个不可匹配的 token。路由按 Unicode 文字范围：中文 `zh/zh-TW` 用 `jieba-rs`，日语 `ja` 与韩语 `ko` 用 `lindera`（内嵌 ipadic/ko-dic 词典），其余按空格切分的语言（en/es/fr/de/it/ru/pt/ar/hi）走空格切分——覆盖 cockpit 的全部 13 种语言。FTS 索引在打开时通过 `PRAGMA user_version` 一次性重建（多语言路由已升到 4），使已有数据库也用上切分后的 token。
 - **更高的词法权重。** `SearchQuery.keyword_weight` 默认 `0.5`（原 `0.3`），词法命中更早参与剪枝与排序；`semantic_weight` 保持 `0.7`。`MemoryController` 同样使用 `0.7 / 0.5`。
 - **批量检索。** `MemoStore::search_batch` / `MemoManager::search_batch` / `recall_batch` 在单次连接锁内（一次 FTS5 准备 + 一次扫描）对多个查询打分，返回 `Vec<Vec<ScoredMemo>>`。CLI 提供 `aria-memo search-batch --text … --text …` 与 `aria-memo bench --batch`（报告 `batch.ops_per_sec`）。
 

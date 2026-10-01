@@ -5,6 +5,11 @@ use std::sync::Mutex;
 
 use std::sync::OnceLock;
 use jieba_rs::{Jieba, TokenizeMode};
+use lindera::mode::Mode;
+use lindera::segmenter::Segmenter;
+use lindera_dictionary::loader::DictionaryLoader;
+use lindera_ipadic::embedded::EmbeddedIPADICLoader;
+use lindera_ko_dic::embedded::EmbeddedKoDicLoader;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS memories (
@@ -38,14 +43,15 @@ CREATE INDEX IF NOT EXISTS idx_relations_to ON relations(to_id);
 -- FTS5 full-text index over memory content for lexical (BM25) candidate
 -- pushdown. Kept as a standalone table (mem_id UNINDEXED) and synced on
 -- add/update/forget to avoid FTS5 external-content rowid/TEXT-id mapping.
--- CJK word segmentation is performed in Rust via jieba-rs (dict-based, accurate
--- Chinese word segmentation, embedded dictionary) before insert: content is
--- pre-segmented into space-joined tokens and the default (unicode61) tokenizer
--- indexes those tokens. This makes Chinese queries match sub-words instead of
--- the whole run. The same segmenter is used on the query side in
--- fts5_match_expr so indexed/query tokens align.
--- (SQLite's built-in 'icu' tokenizer cannot be enabled in this bundled build,
--- hence the pre-segmentation approach.)
+-- Multi-lingual word segmentation is performed in Rust before insert (SQLite's
+-- built-in 'icu' tokenizer cannot be enabled in this bundled build, hence the
+-- pre-segmentation approach): content is pre-segmented into space-joined tokens
+-- and the default (unicode61) tokenizer indexes those tokens. Routing by script
+-- gives every cockpit locale word-level tokens — Chinese (zh/zh-TW) via jieba-rs,
+-- Japanese (ja) and Korean (ko) via lindera (embedded ipadic/ko-dic), and the
+-- remaining space-delimited languages (en/es/fr/de/it/ru/pt/ar/hi) via whitespace.
+-- The same `segment` logic is used on the query side in fts5_match_expr so
+-- indexed/query tokens align.
 CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(content, mem_id UNINDEXED);
 ";
 
@@ -199,15 +205,16 @@ impl SqliteStore {
     /// Create tables and indexes.
     pub fn migrate(&self) -> Result<()> {
         let conn = self.conn.lock().expect("sqlite lock poisoned");
-        // One-time rebuild of the FTS5 index. Before user_version 3 the FTS index
-        // stored either raw content (CJK as one token) or icu_segmenter-pre-segmented
-        // tokens. After 3 it stores jieba-rs-pre-segmented tokens, so existing
-        // databases (user_version < 3) must drop and rebuild their FTS table once.
-        // `IF NOT EXISTS` in SCHEMA would otherwise leave the stale table in place.
+        // One-time rebuild of the FTS5 index. Before user_version 4 the FTS index
+        // stored raw content (CJK as one token), icu_segmenter- or jieba-rs-pre-segmented
+        // tokens. After 4 it uses the multilingual router (jieba-rs for Chinese, lindera
+        // for Japanese/Korean, whitespace for the rest), so existing databases
+        // (user_version < 4) must drop and rebuild their FTS table once. `IF NOT EXISTS`
+        // in SCHEMA would otherwise leave the stale table in place.
         let user_version: i64 = conn
             .query_row("PRAGMA user_version", [], |row| row.get(0))
             .map_err(db_err)?;
-        let rebuild = user_version < 3;
+        let rebuild = user_version < 4;
         if rebuild {
             conn.execute_batch("DROP TABLE IF EXISTS memories_fts;")
                 .map_err(db_err)?;
@@ -248,7 +255,7 @@ impl SqliteStore {
             )
             .map_err(db_err)?;
         }
-        conn.execute_batch("PRAGMA user_version=3;")
+        conn.execute_batch("PRAGMA user_version=4;")
             .map_err(db_err)?;
         Ok(())
     }
@@ -696,19 +703,16 @@ fn search_inner(conn: &Connection, q: &SearchQuery) -> Result<Vec<ScoredMemo>> {
 /// Pre-segment `text` into space-joined tokens for the FTS5 index.
 ///
 /// SQLite's bundled build here cannot enable the built-in `icu` tokenizer, so we
-/// segment in Rust with `jieba-rs` (dict-based, accurate Chinese word
-/// segmentation, embedded dictionary) and store the space-joined tokens. The
-/// default `unicode61` tokenizer then indexes each token, giving Chinese
-/// sub-word recall. The same segmenter is used on the query side in
-/// `fts5_match_expr` so indexed/query tokens align. Punctuation/whitespace-only
-/// runs are dropped (see `is_index_term`).
+/// segment in Rust and store the space-joined tokens; the default `unicode61`
+/// tokenizer then indexes each token. Routing (see `segment`) picks the right
+/// segmenter per script so every cockpit locale gets word-level tokens:
+/// Chinese (zh/zh-TW) via `jieba-rs`, Japanese (ja) and Korean (ko) via
+/// `lindera` (embedded ipadic/ko-dic dictionaries), and the remaining
+/// space-delimited languages (en/es/fr/de/it/ru/pt/ar/hi) via whitespace.
+/// `fts5_match_expr` uses the same `segment` so indexed/query tokens align.
+/// Punctuation/whitespace-only runs are dropped (see `is_index_term`).
 fn fts5_index_text(text: &str) -> String {
-    let tokens: Vec<&str> = jieba()
-        .tokenize(text, TokenizeMode::Default, true)
-        .into_iter()
-        .map(|t| t.word.trim())
-        .filter(|w| is_index_term(w))
-        .collect();
+    let tokens = segment(text);
     if tokens.is_empty() {
         text.trim().to_string()
     } else {
@@ -716,19 +720,14 @@ fn fts5_index_text(text: &str) -> String {
     }
 }
 
-/// Build an FTS5 MATCH expression: each jieba word-segmented query token is a
-/// quoted token OR-joined, so a document need only contain any query term to be
-/// a lexical candidate (recall-biased pushdown). Using `jieba-rs` on the query
-/// side keeps tokens aligned with the pre-segmented index, so Chinese sub-words
-/// match correctly (replacing the old Rust `is_alphanumeric` split, which left
-/// whole CJK runs as a single non-matching token; and more accurate than the
-/// previous ICU4X segmenter, which mis-cut e.g. `香蕉` into `吃香 蕉`).
+/// Build an FTS5 MATCH expression: each `segment`-produced token is a quoted
+/// token OR-joined, so a document need only contain any query term to be a
+/// lexical candidate (recall-biased pushdown). Using the same `segment` on the
+/// query side keeps tokens aligned with the pre-segmented index, so sub-words
+/// match correctly (e.g. Chinese `香蕉`, Japanese `リンゴ`, Korean `사과`).
 fn fts5_match_expr(text: &str) -> String {
-    let terms: Vec<String> = jieba()
-        .tokenize(text, TokenizeMode::Default, true)
+    let terms: Vec<String> = segment(text)
         .into_iter()
-        .map(|t| t.word.trim().to_string())
-        .filter(|w| is_index_term(w))
         .map(|w| format!("\"{}\"", w.replace('"', "")))
         .collect();
     if terms.is_empty() {
@@ -739,10 +738,65 @@ fn fts5_match_expr(text: &str) -> String {
 }
 
 /// A token worth indexing/matching: non-empty and containing at least one
-/// alphanumeric (incl. CJK ideographs) character, so pure punctuation/space runs
-/// are ignored.
+/// alphanumeric (incl. CJK ideographs, Kana, Hangul) character, so pure
+/// punctuation/space runs are ignored.
 fn is_index_term(t: &str) -> bool {
     !t.is_empty() && t.chars().any(|c| c.is_alphanumeric())
+}
+
+/// Segment `text` into word-level tokens for the active script, routed by
+/// Unicode blocks (no ML, no network):
+/// - Hiragana/Katakana present → Japanese, `lindera` ipadic.
+/// - Otherwise Hangul present → Korean, `lindera` ko-dic.
+/// - Otherwise CJK ideographs present → Chinese (zh/zh-TW), `jieba-rs`.
+/// - Otherwise → space-delimited tokens (Latin/Cyrillic/Arabic/Devanagari/...).
+///
+/// Every branch's tokens pass through `is_index_term`.
+fn segment(text: &str) -> Vec<String> {
+    let has_kana = text.chars().any(is_kana);
+    let has_hangul = text.chars().any(is_hangul);
+    let has_han = text.chars().any(is_cjk_ideograph);
+    let raw: Vec<String> = if has_kana {
+        lindera_tokens(ja_segmenter(), text)
+    } else if has_hangul {
+        lindera_tokens(ko_segmenter(), text)
+    } else if has_han {
+        jieba()
+            .tokenize(text, TokenizeMode::Default, true)
+            .into_iter()
+            .map(|t| t.word.to_string())
+            .collect()
+    } else {
+        text.split_whitespace().map(|s| s.to_string()).collect()
+    };
+    raw.into_iter()
+        .map(|w| w.trim().to_string())
+        .filter(|w| is_index_term(w))
+        .collect()
+}
+
+/// Run `lindera` segmentation and collect surface strings (errors fall back to
+/// an empty list so a bad dictionary can never break indexing/querying).
+fn lindera_tokens(seg: &Segmenter, text: &str) -> Vec<String> {
+    match seg.new_worker().segment(text) {
+        Ok(tokens) => tokens.into_iter().map(|t| t.surface.to_string()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// Script-range predicates used by `segment`.
+fn is_kana(c: char) -> bool {
+    ('\u{3040}'..='\u{309F}').contains(&c) || ('\u{30A0}'..='\u{30FF}').contains(&c)
+}
+fn is_hangul(c: char) -> bool {
+    ('\u{AC00}'..='\u{D7A3}').contains(&c)
+        || ('\u{1100}'..='\u{11FF}').contains(&c)
+        || ('\u{3130}'..='\u{318F}').contains(&c)
+}
+fn is_cjk_ideograph(c: char) -> bool {
+    ('\u{3400}'..='\u{4DBF}').contains(&c)
+        || ('\u{4E00}'..='\u{9FFF}').contains(&c)
+        || ('\u{F900}'..='\u{FAFF}').contains(&c)
 }
 
 /// Process-wide `jieba-rs` instance. `Jieba::new()` loads the embedded
@@ -750,6 +804,24 @@ fn is_index_term(t: &str) -> bool {
 fn jieba() -> &'static Jieba {
     static INSTANCE: OnceLock<Jieba> = OnceLock::new();
     INSTANCE.get_or_init(Jieba::new)
+}
+
+/// Process-wide Japanese `lindera` segmenter (embedded ipadic dictionary).
+fn ja_segmenter() -> &'static Segmenter {
+    static INSTANCE: OnceLock<Segmenter> = OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let dict = EmbeddedIPADICLoader::new().load().expect("load embedded ipadic dictionary");
+        Segmenter::new(Mode::Normal, dict, None)
+    })
+}
+
+/// Process-wide Korean `lindera` segmenter (embedded ko-dic dictionary).
+fn ko_segmenter() -> &'static Segmenter {
+    static INSTANCE: OnceLock<Segmenter> = OnceLock::new();
+    INSTANCE.get_or_init(|| {
+        let dict = EmbeddedKoDicLoader::new().load().expect("load embedded ko-dic dictionary");
+        Segmenter::new(Mode::Normal, dict, None)
+    })
 }
 
 #[cfg(test)]
@@ -892,6 +964,67 @@ mod tests {
         assert!(!is_index_term("，"));
         assert!(!is_index_term("  "));
         assert!(is_index_term("rust"));
+    }
+
+    #[test]
+    fn japanese_keyword_search() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "私はリンゴが好きです", Some(vec![0.9, 0.1])))
+            .unwrap();
+        s.add(&mem("b", "今日は良い天気です", Some(vec![0.1, 0.9])))
+            .unwrap();
+        // Japanese sub-word recall via lindera (ipadic): a single word must match.
+        let mut q = SearchQuery::new("リンゴ");
+        q.semantic_weight = 0.0;
+        q.keyword_weight = 1.0;
+        let r = s.search(&q).unwrap();
+        assert!(!r.is_empty(), "japanese sub-word should match via lindera");
+        assert_eq!(r[0].memo.id, "a");
+        // A word from the other doc.
+        let mut q2 = SearchQuery::new("天気");
+        q2.semantic_weight = 0.0;
+        q2.keyword_weight = 1.0;
+        let r2 = s.search(&q2).unwrap();
+        assert_eq!(r2[0].memo.id, "b");
+    }
+
+    #[test]
+    fn korean_keyword_search() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "나는 사과를 좋아합니다", Some(vec![0.9, 0.1])))
+            .unwrap();
+        s.add(&mem("b", "그는 바나나를 먹었다", Some(vec![0.1, 0.9])))
+            .unwrap();
+        // Korean sub-word recall via lindera (ko-dic).
+        let mut q = SearchQuery::new("사과");
+        q.semantic_weight = 0.0;
+        q.keyword_weight = 1.0;
+        let r = s.search(&q).unwrap();
+        assert!(!r.is_empty(), "korean sub-word should match via lindera");
+        assert_eq!(r[0].memo.id, "a");
+        // A word from the other doc.
+        let mut q2 = SearchQuery::new("바나나");
+        q2.semantic_weight = 0.0;
+        q2.keyword_weight = 1.0;
+        let r2 = s.search(&q2).unwrap();
+        assert_eq!(r2[0].memo.id, "b");
+    }
+
+    #[test]
+    fn multilingual_segment_routing() {
+        // Japanese text routes to lindera (ipadic) and keeps リンゴ as a token.
+        let ja: Vec<String> = segment("私はリンゴが好きです");
+        assert!(ja.contains(&"リンゴ".to_string()), "ja should route to lindera, got {ja:?}");
+        // Korean text routes to lindera (ko-dic) and keeps 사과 as a token.
+        let ko: Vec<String> = segment("나는 사과를 좋아합니다");
+        assert!(ko.contains(&"사과".to_string()), "ko should route to lindera, got {ko:?}");
+        // Chinese text routes to jieba-rs and keeps 苹果 as a token.
+        let zh: Vec<String> = segment("用户喜欢用苹果手机拍照");
+        assert!(zh.contains(&"苹果".to_string()), "zh should route to jieba, got {zh:?}");
+        // Latin text uses whitespace tokenization.
+        let en: Vec<String> = segment("rust systems programming 香蕉");
+        assert!(en.contains(&"rust".to_string()));
+        assert!(en.contains(&"香蕉".to_string()));
     }
 
     #[test]

@@ -43,6 +43,17 @@ Jev-Mem 启发的结构化多关系记忆层，叠加在扁平 `MemoStore` 之�
 - `RelationScorer` 可插拔：默认 `LocalRelationScorer` 纯本地启发式（semantic=cosine / temporal=时间序 / entity=token Jaccard / causal=时间邻+重叠）；可换 LLM 实现而不动控制器。
 - 范围外（M4）：LLM 抽取/摘要、跨会话/跨用户全局图、云端协同图（属后续里程碑）。
 
+### 1.4 范围内（M7，多语言词级切分）
+
+参考 cockpit 支持的全部 13 种本地语言（en zh zh-TW es fr de it ru ja ko pt ar hi），对 FTS5 索引做词级预切分，使各语言子词均可命中（bundle 的 rusqlite 不能开启内置 `icu` 分词器，故在 Rust 侧按 Unicode script 路由）：
+
+- 中文（zh / zh-TW）：`jieba-rs`（纯 Rust、内嵌词典，基于词典的中文词切分）。
+- 日语（ja）：`lindera` + 内嵌 `ipadic` 词典（形态切分）。
+- 韩语（ko）：`lindera` + 内嵌 `ko-dic` 词典（形态切分，召回质量高）。
+- 空格型语言（en / es / fr / de / it / ru / pt / ar / hi）：沿用 `memories_fts` 默认 `unicode61` 空白切分（拉丁/西里尔/阿拉伯/天城文按词天然以空格分隔）。
+
+实现：`fts5_index_text` 与 `fts5_match_expr` 共用 `segment(text)`（按 Unicode script 路由），写入侧空格拼接、查询侧逐词加引号 `OR` 连接；`is_index_term` 丢弃纯标点/空白 run。`jieba-rs` / `lindera` 分词器以进程级 `OnceLock` 单例持有，词典仅加载一次。依赖 `lindera` / `lindera-dictionary` / `lindera-ipadic` / `lindera-ko-dic`，词典内嵌（构建期与运行期均零网络下载）；代价是二进制体积更大。已有数据库的 FTS 索引在 `migrate` 时通过 `user_version`（3 → 4）一次性重建以用上新分词 token。
+
 ## 2. API
 
 ### 2.1 数据模型（memo-core）
@@ -228,7 +239,7 @@ pub fn graph_bfs(
 | content | TEXT | 全文索引列（记忆内容） |
 | mem_id | TEXT | UNINDEXED，记忆 id（独立表，避免 FTS5 external-content 的 rowid/TEXT-id 映射） |
 
-说明：独立 `memories_fts` 表（非 external-content），`mem_id` 标记为 `UNINDEXED`；`add` 插入后同步写一行，`update` 先删后插，`forget` 删除对应行，`migrate` 以 `id NOT IN (SELECT mem_id FROM memories_fts)` 幂等回填旧数据。检索时仅当 `keyword_weight>0` 且 query 非空，才用 FTS5 `MATCH` + `bm25()` 取 `top_k*5 max 50` 命中点作候选集（CJK/标点 token 丢弃，回退全表扫描）；候选集内再做 Rust 内存余弦精排，词法命中更早剪枝候选。
+说明：独立 `memories_fts` 表（非 external-content），`mem_id` 标记为 `UNINDEXED`；`add` 插入后同步写一行，`update` 先删后插，`forget` 删除对应行，`migrate` 以 `id NOT IN (SELECT mem_id FROM memories_fts)` 幂等回填旧数据。写入前内容经 `segment()` 按 Unicode script 预切分（中日韩：jieba-rs/lindera 词级切分；其余语言：unicode61 空格切分），空格拼接存入 `content` 索引列；纯标点/空白 run 丢弃。检索时仅当 `keyword_weight>0` 且 query 非空，才用 FTS5 `MATCH` + `bm25()` 取 `top_k*5 max 50` 命中点作候选集（query 同样经 `segment()` 切词后 OR 连接，与索引 token 对齐；标点/空白 run 丢弃，回退全表扫描）；候选集内再做 Rust 内存余弦精排，词法命中更早剪枝候选。
 
 ## 4. 异常（MemoError，thiserror）
 
@@ -268,6 +279,16 @@ pub fn graph_bfs(
   - `LocalRelationScorer`：四视图打分在 [0,1]（semantic=cosine / temporal=时间序 / entity=token Jaccard / causal=时间邻+重叠）。
   - CLI：`relate` 拒未知 kind / 自环 / 越界 score；`relations`/`graph` 正常 + `--json` 形态；`connect` 对未存 id → `NotFound`；`search --graph` 等价图感知。
 - 回归：既有扁平 `search`/`recall`（纯向量）与 `Memo` 模型行为不变，作为图检索回退。
+
+### 5.2 M7 验收标准（多语言词级切分）
+
+- `cargo test` 全绿、`cargo clippy --all-targets` 无告警（含多语言用例）。
+- 中文子词命中：`search --text "香蕉"` 命中含「小明爱吃香蕉和橘子」的记忆（jieba 整词切分，修复 ICU4X 误切）。
+- 日语形态切分：`search` 以日语词级 token 命中对应记忆（`japanese_keyword_search` 单测）。
+- 韩语形态切分：`search` 以韩语词级 token 命中对应记忆（`korean_keyword_search` 单测）。
+- 路由正确性：`multilingual_segment_routing` 单测验证 `segment()` 对中/日/韩走形态分词、对空格型语言（en 等）保留原词、对纯标点/空白返回空（被 `is_index_term` 丢弃）。
+- 迁移：既有数据库（user_version < 4）打开时 `migrate` 重建 `memories_fts` 并回填为新的多语言切分 token；中文既有命中不被破坏。
+- 文档：README/README_cn、AGENTS.md、本文件 §1.4/§3 与 task.md M7 同步。
 
 ## 6. 业界对比与评测（M2）
 

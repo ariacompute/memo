@@ -97,6 +97,25 @@
 - `aria-memo bench --wal --batch-embed --bulk --json` 输出 `add_baseline`/`add_wal`/`add_batch_embed`/`add_bulk` 四分段，验证 add p99 收敛。
 - 控制组与 Track B 复用集在依赖/数据缺失时 skip 并写 `reason`，不伪造数值。
 
+## M7 — 多语言词级切分（覆盖 cockpit 全部 13 种本地语言，已落地）
+
+> 需求：参考 cockpit 支持的全部本地语言（en zh zh-TW es fr de it ru ja ko pt ar hi），让 FTS5 索引对所有语言做词级切分。bundle 的 rusqlite 不能开启内置 `icu` 分词器，故在 Rust 侧按 Unicode script 路由：中文 jieba-rs、日语 lindera+ipadic、韩语 lindera+ko-dic、其余空格型语言沿用 unicode61 空白切分。规格见 requirements.md §1.4 / §3 / §5.2。
+
+53. [x] `Cargo.toml`（workspace）：新增 `lindera`/`lindera-dictionary`/`lindera-ipadic`(features=["embed-ipadic"])/`lindera-ko-dic`(features=["embed-ko-dic"])；`crates/storage/Cargo.toml` 引用之（保留 `jieba-rs`）
+54. [x] `memo-storage`：新增 `segment(text) -> Vec<String>`，按 Unicode script 路由——中日韩走 jieba-rs/lindera 词级切分、空格型语言按 unicode61 空白切分；`fts5_index_text` 空格拼接、`fts5_match_expr` 逐词加引号 OR 连接，二者共用 `segment`，保证索引/查询 token 对齐
+55. [x] `memo-storage`：`jieba-rs` / `lindera` 分词器以进程级 `OnceLock` 单例持有（`Jieba::new` / `Tokenizer::new` 仅加载一次内嵌词典）；新增 `is_index_term` 丢弃纯标点/空白 run
+56. [x] `memo-storage`：`migrate` 的 `user_version` 由 3 升到 4，触发旧库一次性重建 `memories_fts` 并回填多语言切分 token
+57. [x] 单测覆盖（正常 + 路由）：`multilingual_segment_routing`（中/日/韩走形态分词、空格型语言保留原词、纯标点/空白返回空）、`japanese_keyword_search`、`korean_keyword_search`；中文 `香蕉` 整词命中回归保留
+58. [x] 文档同步：README/README_cn 的「CJK 词级切分」段改为多语言；AGENTS.md §进行中需求 增 M7、注意事项 M5 注记改为多语言；requirements.md 增 §1.4 / 改 §3 `memories_fts` 注记 / 增 §5.2
+59. [x] 验收：`cargo test` 全绿、`cargo clippy --all-targets` 无告警
+
+### M7
+- `cargo test` + `cargo clippy --all-targets` 全绿（含多语言用例）。
+- 路由：`multilingual_segment_routing` 验证 中/日/韩 → 形态分词、en 等空格型语言 → 保留原词、纯标点/空白 → 丢弃。
+- 命中：`search --text "香蕉"` 命中中文记忆；日语/韩语词级 token 各命中对应记忆。
+- 迁移：既有库（user_version < 4）打开时重建 FTS 并回填，中文既有命中不被破坏。
+- 文档：README / README_cn / AGENTS.md / requirements.md(§1.4/§3/§5.2) / 本 M7 同步。
+
 ## 验证
 
 ### M1
@@ -117,3 +136,10 @@
 - 异常路径：自环 / score 越界 / 空 provenance / 未知 kind / seeds 空 / budget=0 / max_hops=0 / top_k=0 / 端点缺失 `NotFound` / `delete` 过滤全空 `InvalidParam` 均有单测。
 - 回归：既有扁平 `search`/`recall` 与 `Memo` 模型行为不变。
 - 手动冒烟：`cargo run -p aria-memo -- connect --id <id>`、`relate --from .. --to .. --kind semantic`、`relations --json`、`graph --text "..." --json`。
+
+### M7
+- `cargo test` + `cargo clippy --all-targets` 全绿（含多语言用例）。
+- 路由：`multilingual_segment_routing` 验证 中/日/韩 → 形态分词、en 等空格型语言 → 保留原词、纯标点/空白 → 丢弃。
+- 命中：`search --text "香蕉"` 命中中文记忆；日语/韩语词级 token 各命中对应记忆。
+- 迁移：既有库（user_version < 4）打开时重建 FTS 并回填，中文既有命中不被破坏。
+- 文档：README / README_cn / AGENTS.md / requirements.md(§1.4/§3/§5.2) / 本 M7 同步。
