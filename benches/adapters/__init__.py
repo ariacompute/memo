@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from .aria_memo import AriaMemoBackend
 from .base import BackendInfo, MemoBackend, SearchHit, UnsupportedCapability
+from .chromem import ChromemBackend
 from .letta_adapter import LettaBackend
 from .mem0_adapter import Mem0Backend
 from .memos_adapter import MemosBackend
 from .mempalace_adapter import MemPalaceBackend
 from .skip import SkipBackend
+from .sqlite_vec import SqliteVecBackend
 from .zep_adapter import ZepBackend
 
 
@@ -14,6 +16,10 @@ def build_backend(name: str) -> MemoBackend:
     key = name.strip().lower()
     if key in {"aria", "aria-memo", "aria_memo"}:
         return AriaMemoBackend()
+    if key == "sqlite_vec":
+        return SqliteVecBackend()
+    if key == "chromem":
+        return ChromemBackend()
     if key == "mem0":
         return Mem0Backend()
     if key in {"memos", "mem-os"}:
@@ -30,6 +36,7 @@ def build_backend(name: str) -> MemoBackend:
 __all__ = [
     "AriaMemoBackend",
     "BackendInfo",
+    "ChromemBackend",
     "LettaBackend",
     "Mem0Backend",
     "MemPalaceBackend",
@@ -37,6 +44,7 @@ __all__ = [
     "MemosBackend",
     "SearchHit",
     "SkipBackend",
+    "SqliteVecBackend",
     "UnsupportedCapability",
     "ZepBackend",
     "build_backend",

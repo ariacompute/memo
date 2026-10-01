@@ -34,3 +34,20 @@ def retrieval_hit_rate(
         return 0.0, 0, 0
     hits = sum(1 for rel, ret in pairs if recall_at_k(rel, ret, k) > 0.0)
     return hits / total, hits, total
+
+
+def mean_std(values: Iterable[float]) -> tuple[float, float]:
+    """Return (mean, sample standard deviation). Empty input -> (0.0, 0.0).
+
+    Sample stdev uses n-1 (Bessel's correction); low-variance query sets still yield a
+    meaningful, non-fabricated dispersion for the comparison matrix.
+    """
+    xs = list(values)
+    n = len(xs)
+    if n == 0:
+        return 0.0, 0.0
+    mean = sum(xs) / n
+    if n == 1:
+        return mean, 0.0
+    var = sum((x - mean) ** 2 for x in xs) / (n - 1)
+    return mean, var ** 0.5

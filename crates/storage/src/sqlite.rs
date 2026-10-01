@@ -200,6 +200,16 @@ impl SqliteStore {
         Ok(())
     }
 
+    /// Enable WAL journal mode for this connection. Reduces write tail under
+    /// batch/concurrent load by relaxing the fsync-per-transaction constraint.
+    /// No-op for `:memory:` databases (SQLite reports `memory` there).
+    pub fn enable_wal(&self) -> Result<()> {
+        let conn = self.conn.lock().expect("sqlite lock poisoned");
+        conn.execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(db_err)?;
+        Ok(())
+    }
+
     fn insert(&self, conn: &Connection, m: &Memo) -> Result<()> {
         let emb = serialize_embedding(m.embedding.as_deref())?;
         let meta =
@@ -362,6 +372,10 @@ impl MemoStore for SqliteStore {
             out.push(search_inner(&conn, q)?);
         }
         Ok(out)
+    }
+
+    fn enable_wal(&self) -> Result<()> {
+        SqliteStore::enable_wal(self)
     }
 
     fn add_batch(&self, memories: &[Memo]) -> Result<()> {
@@ -834,6 +848,27 @@ mod tests {
     fn backend_kind_is_sqlite() {
         let s = SqliteStore::open(":memory:").unwrap();
         assert_eq!(s.backend_kind(), "sqlite");
+    }
+
+    #[test]
+    fn enable_wal_sets_journal_mode() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("mem_wal_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let s = SqliteStore::open(path.to_str().unwrap()).unwrap();
+            s.enable_wal().unwrap();
+            let mode: String = s
+                .conn
+                .lock()
+                .unwrap()
+                .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(mode.to_lowercase(), "wal");
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(dir.join(format!("mem_wal_{}.db-wal", std::process::id())));
+        let _ = std::fs::remove_file(dir.join(format!("mem_wal_{}.db-shm", std::process::id())));
     }
 
     #[test]

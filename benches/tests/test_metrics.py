@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from metrics import (
     bleu,
     choice_hit,
+    mean_std,
     mrr,
     multiple_candidate_max,
     multiple_choice_accuracy,
@@ -79,6 +80,18 @@ class TestMetrics(unittest.TestCase):
         self.assertEqual(total, 2)
         self.assertEqual(hits, 1)
         self.assertAlmostEqual(r, 0.5)
+
+    def test_mean_std_empty(self):
+        self.assertEqual(mean_std([]), (0.0, 0.0))
+
+    def test_mean_std_single(self):
+        self.assertEqual(mean_std([3.0]), (3.0, 0.0))
+
+    def test_mean_std_sample(self):
+        mean, std = mean_std([1.0, 2.0, 3.0, 4.0, 5.0])
+        self.assertAlmostEqual(mean, 3.0)
+        # population var would be 2.0; sample var (n-1) is 2.5 -> std sqrt(2.5)
+        self.assertAlmostEqual(std, (2.5 ** 0.5))
 
 
 if __name__ == "__main__":

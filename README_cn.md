@@ -90,11 +90,12 @@ cargo run -p aria-memo -- search --text "Rust" --graph
 **离线检索质量。** 扁平 `search` 走混合检索：本地语义分（哈希嵌入的余弦）+ 零依赖的词法分
 （`lexical_relevance`：按稀有度加权的词项重叠 + 精确短语奖励，并含 CJK 字符 2-gram）。由于内置
 嵌入器是轻量 hash/TF-IDF 向量器（不引入重型 ML），语义信号刻意偏弱；`lexical_relevance` 最大化
-关键词贡献，使离线召回仍可用。可用 `SearchQuery.keyword_weight`（默认 `0.3`）调节平衡。
+关键词贡献，使离线召回仍可用。可用 `SearchQuery.keyword_weight`（默认 `0.5`）调节平衡。
 
 ## 对比评测
 
-对比系统：mem0 / MemOS / MemPalace / Zep / Letta。
+对比系统：mem0 / MemOS / MemPalace / Zep / Letta，外加本地嵌入式**控制组** `sqlite_vec` 与
+`chromem`（默认纳入；其依赖/二进制缺失时按 `reason` 跳过并写原因，绝不伪造数值）。
 
 - 功能矩阵：[docs/compare.md](./docs/compare.md)
 - 评测说明与结果：[docs/bench_results.md](./docs/bench_results.md)
@@ -103,6 +104,7 @@ cargo run -p aria-memo -- search --text "Rust" --graph
 ```bash
 pip install -r benches/requirements.txt
 python benches/run.py --track a --size 1000
+python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem
 python benches/run.py --track b --dry-run
 ```
 

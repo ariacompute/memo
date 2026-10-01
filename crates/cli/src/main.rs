@@ -168,6 +168,15 @@ enum Command {
         /// Also measure batch retrieval throughput (single lock over all queries)
         #[arg(long, default_value_t = false)]
         batch: bool,
+        /// Enable WAL journal mode and report the `add_wal` write-tail segment
+        #[arg(long, default_value_t = false)]
+        wal: bool,
+        /// Measure the `add_batch_embed` segment (batch embed + transactional batch write)
+        #[arg(long, default_value_t = false)]
+        batch_embed: bool,
+        /// Measure the `add_bulk` segment (per-item embed + transaction merge)
+        #[arg(long, default_value_t = false)]
+        bulk: bool,
     },
     /// Write CLI config (~/.ariacompute/memo-cli.yml)
     Setup(Box<SetupArgs>),
@@ -202,6 +211,9 @@ fn run(cli: Cli) -> Result<()> {
             warmup,
             json: _,
             batch,
+            wal,
+            batch_embed,
+            bulk,
         } => {
             let path = std::env::temp_dir().join(format!(
                 "aria-memo-bench-{}.db",
@@ -209,7 +221,16 @@ fn run(cli: Cli) -> Result<()> {
             ));
             let _ = std::fs::remove_file(&path);
             let manager = build_manager(path.to_str().unwrap_or(":memory:"));
-            println!("{}", commands::bench(&manager, size, top_k, warmup, batch)?);
+            let cfg = commands::BenchConfig {
+                size,
+                top_k,
+                warmup,
+                search_batch: batch,
+                wal,
+                batch_embed,
+                bulk,
+            };
+            println!("{}", commands::bench(&manager, &cfg)?);
             let _ = std::fs::remove_file(&path);
         }
         other => {

@@ -291,17 +291,18 @@ pub fn graph_bfs(
 
 ### 6.3 Track A — 微基准与检索质量
 
-**A1 微基准（延迟/资源）**
+**A1 微基准（延迟/资源 / 扩展曲线 / 写长尾）**
 
-- 规模：库规模 `1k` / `10k`（可选 `100k`）；`search` top-k ∈ {5, 10}。
-- 指标：`add` / `search` 的 p50 / p99（ms）、吞吐（ops/s）、DB 文件大小、进程 RSS、冷启动（open+migrate）、离线可跑（断网）。
-- aria 侧：CLI 提供进程内 `bench` 子命令输出 JSON，避免把进程启动计入热路径；Python 解析并汇总。
+- 规模：**多尺寸 sweep** `1k` / `10k` / `100k`（CLI `--sizes`，默认 `1000,10000,100000`）；`search` top-k ∈ {5, 10}。
+- 扩展曲线：对每个 size 测 `add` / `search` 的 p50 / p99（ms）与吞吐（ops/s），跨尺寸计算 **p99 增长因子**（`p99@10k / p99@1k`、`p99@100k / p99@10k`），报告亚线性判定（增长因子 < 尺寸倍率即亚线性）。
+- 写长尾压测：aria CLI `bench` 新增 `--wal` / `--batch-embed` / `--bulk`，分别报告 `add_baseline`（默认 journal + 逐条嵌入+事务）、`add_wal`（WAL 模式）、`add_batch_embed`（`add_batch` 批量嵌入+事务合并）、`add_bulk`（逐条嵌入+`add_batch` 事务合并）的 p50/p99/ops，观察 add p99 是否收敛。
+- 本地控制组：**`sqlite_vec`**（pip `sqlite-vec`，本地 SQLite 向量索引 + 离线哈希-n-gram 嵌入）与 **`chromem`**（chromem-go 二进制子进程，离线）纳入默认 `--systems`，缺依赖/二进制时 skip 并写 `reason`，让对比矩阵有真实数值。
 - 他系统：经 `benches/adapters/*` 调用；缺依赖/密钥时 skip 并写入报告原因，不得静默失败。
 
 **A2 合成检索质量**
 
-- 固定 seed 的合成集（`benches/data/synthetic_retrieval.json`）：同义改写、关键词命中、干扰项。
-- 指标：Recall@k、MRR（可选 nDCG）；CI 可跑小规模回归。
+- 查询集 ≥50–100 条、贴近真实分布：`synthetic_retrieval.json`（小，~8 条）+ `synthetic_retrieval_v2.json`（新增，84 条：关键词/同义改写/干扰项混合）；并支持复用 **Track B 真实数据集**作为查询语料（`--a2-dataset track_b:locomo_refined` / `track_b:halumem`，证据/记忆点作相关文档）。
+- 指标：**Recall@k、MRR 与各自方差（样本标准差）**；`run_retrieval_quality` 输出 `recall_at_k` / `recall_at_k_std` / `mrr` / `mrr_std` / `n_queries`，给出有统计意义的检索质量。
 
 ### 6.4 Track B — 端到端质量（四基准注册表）
 
@@ -323,19 +324,21 @@ benches/
   run.py              # 入口：--track a|b|all
   common/             # 计时、分位数、报告写出
   track_a/            # 微基准 + 合成检索
+    datasets.py       # A2 查询集加载（synthetic / synthetic_v2 / track_b:*）
   track_b/            # locomo_refined / halumem / longmemeval / personamem 注册表 + 子包
-  metrics/            # f1 / bleu / 多选 / recall@k 等离线指标
+  metrics/            # f1 / bleu / 多选 / recall@k / mean_std 等离线指标
   judge.py            # OpenAI 兼容 judge 客户端（可选）
   datasets.py         # 数据集定位与下载
-  adapters/           # aria / mem0 / memos / mempalace / zep / letta
-  data/               # 合成集；fixtures/ 各基准极小合成样例；外部数据集下载说明
+  adapters/           # aria / sqlite_vec / chromem / mem0 / memos / mempalace / zep / letta
+  data/               # synthetic_retrieval.json + synthetic_retrieval_v2.json；fixtures/ 各基准极小合成样例
   tests/              # Python 单测（离线、零网络、零真实 LLM）
   results/            # 生成结果（样例可入库，大体量 gitignore）
 ```
 
 ### 6.6 CLI 增补（供 Track A）
 
-- `memo bench --ops add,search --size N --top-k K --warmup W --json`：进程内跑测，stdout 打印 JSON 指标。
+- `memo bench --size N --top-k K --warmup W --json`：进程内跑测，stdout 打印 JSON（含 `add`/`search` p50/p99/ops + 可选 `batch` 搜索吞吐）。
+- 写长尾开关：`--wal`（WAL 模式，报告 `add_wal`）、`--batch-embed`（报告 `add_batch_embed`）、`--bulk`（报告 `add_bulk`）；均构造独立分段，便于对照 `add_baseline` 观察 add p99 收敛。
 - 不引入 criterion / `crates/bench`。
 
 ### 6.7 M2 验收标准
@@ -347,3 +350,11 @@ benches/
 - `cargo test` / clippy 仍全绿；新增 CLI `update` 与 `list --json` / `search --json` 有单测，默认输出形态不变（既有断言不破坏）。
 - 五系统 adapter 均存在且实现同一基类接口；不可用时报告 N/A + 原因。
 - 下载脚本在缺网络时抛错并打印手动指引，不静默失败。
+
+### 6.8 M6 验收标准（Track A 扩展：规模/控制组/方差/写长尾）
+
+- `run.py --track a --sizes 1000,10000,100000` 产出 A1 多尺寸报告，含 `scaling`（p99 增长因子 + 亚线性/线性/超线性判定）。
+- 默认 `--systems` 含 `sqlite_vec` / `chromem`；缺依赖/二进制时 skip 并写 `reason`（不伪造数值）。
+- A2 产出 `recall_at_k` / `recall_at_k_std` / `mrr` / `mrr_std` / `n_queries`；`--a2-dataset synthetic_v2` 查询数 ≥50，`track_b:*` 能复用真实数据集（缺数据则 skip 并写 reason）。
+- `aria-memo bench --wal --batch-embed --bulk --json` 报告 `add_baseline` / `add_wal` / `add_batch_embed` / `add_bulk` 四分段 p50/p99/ops。
+- `cargo test` / `cargo clippy --all-targets` 全绿；benches `python -m unittest tests.test_metrics tests.test_adapters tests.test_track_a` 全绿。

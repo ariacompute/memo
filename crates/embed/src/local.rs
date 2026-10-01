@@ -49,6 +49,10 @@ impl Embedder for LocalEmbedder {
         self.vectorize(text)
     }
 
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        texts.iter().map(|t| self.vectorize(t)).collect()
+    }
+
     fn dim(&self) -> usize {
         self.dim
     }
@@ -183,5 +187,17 @@ mod tests {
         let e = LocalEmbedder::new(64);
         let v = e.embed("用户喜欢编程").unwrap();
         assert!(v.iter().any(|x| *x != 0.0));
+    }
+
+    #[test]
+    fn embed_batch_matches_per_item() {
+        let e = LocalEmbedder::new(64);
+        let texts = ["rust systems programming", "banana smoothie recipe"];
+        let batch = e.embed_batch(&texts).unwrap();
+        assert_eq!(batch.len(), 2);
+        for (t, v) in texts.iter().zip(batch.iter()) {
+            assert_eq!(v, &e.embed(t).unwrap());
+        }
+        assert!(e.embed_batch(&[]).unwrap().is_empty());
     }
 }

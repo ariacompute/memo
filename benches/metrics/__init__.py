@@ -13,7 +13,7 @@ from .lexical import (
     multiple_candidate_max,
 )
 from .choice import multiple_choice_accuracy, choice_hit
-from .retrieval import recall_at_k, mrr, retrieval_hit_rate
+from .retrieval import recall_at_k, mrr, retrieval_hit_rate, mean_std
 
 __all__ = [
     "normalize_text",
@@ -25,4 +25,5 @@ __all__ = [
     "recall_at_k",
     "mrr",
     "retrieval_hit_rate",
+    "mean_std",
 ]

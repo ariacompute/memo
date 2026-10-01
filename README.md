@@ -103,11 +103,13 @@ score (cosine over the hashing embedder) and a dependency-free lexical score
 CJK character 2-grams). Because the bundled embedder is a lightweight hash/TF-IDF
 vectorizer — no heavy ML — the semantic signal is intentionally weak; `lexical_relevance`
 maximizes the keyword contribution so offline recall stays useful. Tune
-`SearchQuery.keyword_weight` (default `0.3`) to shift the balance.
+`SearchQuery.keyword_weight` (default `0.5`) to shift the balance.
 
 ## Benchmarks & Comparison
 
-Compare against: mem0 / MemOS / MemPalace / Zep / Letta.
+Compare against: mem0 / MemOS / MemPalace / Zep / Letta, plus local embedded
+**control groups** `sqlite_vec` and `chromem` (included by default; skipped with
+a recorded `reason` when their dependency/binary is missing — never faked).
 
 - Feature matrix: [docs/compare.md](./docs/compare.md)
 - Results guide: [docs/bench_results.md](./docs/bench_results.md)
@@ -116,6 +118,7 @@ Compare against: mem0 / MemOS / MemPalace / Zep / Letta.
 ```bash
 pip install -r benches/requirements.txt
 python benches/run.py --track a --size 1000
+python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem
 python benches/run.py --track b --dry-run
 ```
 

@@ -1,0 +1,740 @@
+{
+  "seed": 7,
+  "generator": "synthetic_v2 (keyword + paraphrase + distractor mix)",
+  "corpus": [
+    {
+      "id": "d1",
+      "content": "User prefers Rust for systems programming and likes local-first offline tools."
+    },
+    {
+      "id": "d2",
+      "content": "The team uses SQLite for embedded persistence on mobile devices."
+    },
+    {
+      "id": "d3",
+      "content": "Alice's birthday is March 14 and she enjoys hiking in the mountains."
+    },
+    {
+      "id": "d4",
+      "content": "API rate limit is 100 requests per minute on the free tier."
+    },
+    {
+      "id": "d5",
+      "content": "Project aria-memory consolidates deduplicates and forgets stale memories."
+    },
+    {
+      "id": "d6",
+      "content": "Python microbenchmarks under benches compare mem0 MemOS MemPalace Zep Letta."
+    },
+    {
+      "id": "d7",
+      "content": "The coffee shop on Market Street closes at 8pm on weekdays."
+    },
+    {
+      "id": "d8",
+      "content": "Hybrid retrieval combines cosine semantic similarity with keyword matching."
+    },
+    {
+      "id": "d9",
+      "content": "Bob commutes by bike to the downtown office every morning."
+    },
+    {
+      "id": "d10",
+      "content": "The deployment pipeline runs on GitHub Actions with three stages."
+    },
+    {
+      "id": "d11",
+      "content": "User is allergic to peanuts and avoids Thai cuisine."
+    },
+    {
+      "id": "d12",
+      "content": "Standup meeting is at 9:30am on Tuesdays and Thursdays."
+    },
+    {
+      "id": "d13",
+      "content": "The laptop has 32GB RAM and a 1TB SSD."
+    },
+    {
+      "id": "d14",
+      "content": "Carol leads the platform team and prefers async communication."
+    },
+    {
+      "id": "d15",
+      "content": "The preferred cloud provider is Cloudflare R2 for static assets."
+    },
+    {
+      "id": "d16",
+      "content": "User's favorite programming language after Rust is OCaml."
+    },
+    {
+      "id": "d17",
+      "content": "The on-call rotation covers weekends in two-week shifts."
+    },
+    {
+      "id": "d18",
+      "content": "Dinner reservation at Bella Italia is for 7pm on Friday."
+    },
+    {
+      "id": "d19",
+      "content": "The vector index uses FTS5 for lexical candidate pruning."
+    },
+    {
+      "id": "d20",
+      "content": "User drinks espresso but avoids energy drinks."
+    },
+    {
+      "id": "d21",
+      "content": "The home router reboots daily at 3am for maintenance."
+    },
+    {
+      "id": "d22",
+      "content": "Quarterly review is scheduled for the last Friday of March."
+    },
+    {
+      "id": "d23",
+      "content": "The documentation site is built with mdBook."
+    },
+    {
+      "id": "d24",
+      "content": "User learned Japanese for two years and reached N3."
+    },
+    {
+      "id": "d25",
+      "content": "The build cache lives in tmp and is cleared nightly."
+    },
+    {
+      "id": "d26",
+      "content": "Eve maintains the observability stack with Prometheus and Grafana."
+    },
+    {
+      "id": "d27",
+      "content": "The default theme is dark mode with high contrast."
+    },
+    {
+      "id": "d28",
+      "content": "User's cat is named Mochi and sleeps on the keyboard."
+    },
+    {
+      "id": "d29",
+      "content": "The API gateway enforces a 30-second timeout per request."
+    },
+    {
+      "id": "d30",
+      "content": "Weekend plan is a hiking trip to the northern trail."
+    },
+    {
+      "id": "d31",
+      "content": "The password manager stores secrets in an encrypted vault."
+    },
+    {
+      "id": "d32",
+      "content": "User prefers Vim keybindings in every editor."
+    },
+    {
+      "id": "d33",
+      "content": "The staging environment uses a separate Postgres instance."
+    },
+    {
+      "id": "d34",
+      "content": "Lunch is usually a salad from the corner deli."
+    },
+    {
+      "id": "d35",
+      "content": "The SDK ships native bindings for Swift and Kotlin."
+    },
+    {
+      "id": "d36",
+      "content": "User reads science fiction especially Liu Cixin."
+    }
+  ],
+  "queries": [
+    {
+      "id": "q1",
+      "text": "prefers rust systems programming likes",
+      "relevant_ids": [
+        "d1"
+      ]
+    },
+    {
+      "id": "q2",
+      "text": "What do we know about: prefers rust systems programming likes?",
+      "relevant_ids": [
+        "d1"
+      ]
+    },
+    {
+      "id": "q3",
+      "text": "prefers rust systems programming likes also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d1"
+      ]
+    },
+    {
+      "id": "q4",
+      "text": "team uses sqlite embedded persistence",
+      "relevant_ids": [
+        "d2"
+      ]
+    },
+    {
+      "id": "q5",
+      "text": "Remind me: the team uses sqlite for embedded persistence on mobile devices.",
+      "relevant_ids": [
+        "d2"
+      ]
+    },
+    {
+      "id": "q6",
+      "text": "alice's birthday march 14 she",
+      "relevant_ids": [
+        "d3"
+      ]
+    },
+    {
+      "id": "q7",
+      "text": "Tell me about alice's birthday march 14 she.",
+      "relevant_ids": [
+        "d3"
+      ]
+    },
+    {
+      "id": "q8",
+      "text": "api rate limit 100 requests",
+      "relevant_ids": [
+        "d4"
+      ]
+    },
+    {
+      "id": "q9",
+      "text": "What do we know about: api rate limit 100 requests?",
+      "relevant_ids": [
+        "d4"
+      ]
+    },
+    {
+      "id": "q10",
+      "text": "api rate limit 100 requests also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d4"
+      ]
+    },
+    {
+      "id": "q11",
+      "text": "project aria-memory consolidates deduplicates forgets",
+      "relevant_ids": [
+        "d5"
+      ]
+    },
+    {
+      "id": "q12",
+      "text": "Remind me: project aria-memory consolidates deduplicates and forgets stale memories.",
+      "relevant_ids": [
+        "d5"
+      ]
+    },
+    {
+      "id": "q13",
+      "text": "python microbenchmarks under benches compare",
+      "relevant_ids": [
+        "d6"
+      ]
+    },
+    {
+      "id": "q14",
+      "text": "Tell me about python microbenchmarks under benches compare.",
+      "relevant_ids": [
+        "d6"
+      ]
+    },
+    {
+      "id": "q15",
+      "text": "coffee shop market street closes",
+      "relevant_ids": [
+        "d7"
+      ]
+    },
+    {
+      "id": "q16",
+      "text": "What do we know about: coffee shop market street closes?",
+      "relevant_ids": [
+        "d7"
+      ]
+    },
+    {
+      "id": "q17",
+      "text": "coffee shop market street closes also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d7"
+      ]
+    },
+    {
+      "id": "q18",
+      "text": "hybrid retrieval combines cosine semantic",
+      "relevant_ids": [
+        "d8"
+      ]
+    },
+    {
+      "id": "q19",
+      "text": "Remind me: hybrid retrieval combines cosine semantic similarity with keyword matching.",
+      "relevant_ids": [
+        "d8"
+      ]
+    },
+    {
+      "id": "q20",
+      "text": "bob commutes bike downtown office",
+      "relevant_ids": [
+        "d9"
+      ]
+    },
+    {
+      "id": "q21",
+      "text": "Tell me about bob commutes bike downtown office.",
+      "relevant_ids": [
+        "d9"
+      ]
+    },
+    {
+      "id": "q22",
+      "text": "deployment pipeline runs github actions",
+      "relevant_ids": [
+        "d10"
+      ]
+    },
+    {
+      "id": "q23",
+      "text": "What do we know about: deployment pipeline runs github actions?",
+      "relevant_ids": [
+        "d10"
+      ]
+    },
+    {
+      "id": "q24",
+      "text": "deployment pipeline runs github actions also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d10"
+      ]
+    },
+    {
+      "id": "q25",
+      "text": "allergic peanuts avoids thai cuisine",
+      "relevant_ids": [
+        "d11"
+      ]
+    },
+    {
+      "id": "q26",
+      "text": "Remind me: user is allergic to peanuts and avoids thai cuisine.",
+      "relevant_ids": [
+        "d11"
+      ]
+    },
+    {
+      "id": "q27",
+      "text": "standup meeting 9:30am tuesdays thursdays",
+      "relevant_ids": [
+        "d12"
+      ]
+    },
+    {
+      "id": "q28",
+      "text": "Tell me about standup meeting 9:30am tuesdays thursdays.",
+      "relevant_ids": [
+        "d12"
+      ]
+    },
+    {
+      "id": "q29",
+      "text": "laptop has 32gb ram 1tb",
+      "relevant_ids": [
+        "d13"
+      ]
+    },
+    {
+      "id": "q30",
+      "text": "What do we know about: laptop has 32gb ram 1tb?",
+      "relevant_ids": [
+        "d13"
+      ]
+    },
+    {
+      "id": "q31",
+      "text": "laptop has 32gb ram 1tb also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d13"
+      ]
+    },
+    {
+      "id": "q32",
+      "text": "carol leads platform team prefers",
+      "relevant_ids": [
+        "d14"
+      ]
+    },
+    {
+      "id": "q33",
+      "text": "Remind me: carol leads the platform team and prefers async communication.",
+      "relevant_ids": [
+        "d14"
+      ]
+    },
+    {
+      "id": "q34",
+      "text": "preferred cloud provider cloudflare r2",
+      "relevant_ids": [
+        "d15"
+      ]
+    },
+    {
+      "id": "q35",
+      "text": "Tell me about preferred cloud provider cloudflare r2.",
+      "relevant_ids": [
+        "d15"
+      ]
+    },
+    {
+      "id": "q36",
+      "text": "user's favorite programming language rust",
+      "relevant_ids": [
+        "d16"
+      ]
+    },
+    {
+      "id": "q37",
+      "text": "What do we know about: user's favorite programming language rust?",
+      "relevant_ids": [
+        "d16"
+      ]
+    },
+    {
+      "id": "q38",
+      "text": "user's favorite programming language rust also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d16"
+      ]
+    },
+    {
+      "id": "q39",
+      "text": "on-call rotation covers weekends two-week",
+      "relevant_ids": [
+        "d17"
+      ]
+    },
+    {
+      "id": "q40",
+      "text": "Remind me: the on-call rotation covers weekends in two-week shifts.",
+      "relevant_ids": [
+        "d17"
+      ]
+    },
+    {
+      "id": "q41",
+      "text": "dinner reservation bella italia 7pm",
+      "relevant_ids": [
+        "d18"
+      ]
+    },
+    {
+      "id": "q42",
+      "text": "Tell me about dinner reservation bella italia 7pm.",
+      "relevant_ids": [
+        "d18"
+      ]
+    },
+    {
+      "id": "q43",
+      "text": "vector index uses fts5 lexical",
+      "relevant_ids": [
+        "d19"
+      ]
+    },
+    {
+      "id": "q44",
+      "text": "What do we know about: vector index uses fts5 lexical?",
+      "relevant_ids": [
+        "d19"
+      ]
+    },
+    {
+      "id": "q45",
+      "text": "vector index uses fts5 lexical also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d19"
+      ]
+    },
+    {
+      "id": "q46",
+      "text": "drinks espresso avoids energy drinks",
+      "relevant_ids": [
+        "d20"
+      ]
+    },
+    {
+      "id": "q47",
+      "text": "Remind me: user drinks espresso but avoids energy drinks.",
+      "relevant_ids": [
+        "d20"
+      ]
+    },
+    {
+      "id": "q48",
+      "text": "home router reboots daily 3am",
+      "relevant_ids": [
+        "d21"
+      ]
+    },
+    {
+      "id": "q49",
+      "text": "Tell me about home router reboots daily 3am.",
+      "relevant_ids": [
+        "d21"
+      ]
+    },
+    {
+      "id": "q50",
+      "text": "quarterly review scheduled last friday",
+      "relevant_ids": [
+        "d22"
+      ]
+    },
+    {
+      "id": "q51",
+      "text": "What do we know about: quarterly review scheduled last friday?",
+      "relevant_ids": [
+        "d22"
+      ]
+    },
+    {
+      "id": "q52",
+      "text": "quarterly review scheduled last friday also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d22"
+      ]
+    },
+    {
+      "id": "q53",
+      "text": "documentation site built mdbook",
+      "relevant_ids": [
+        "d23"
+      ]
+    },
+    {
+      "id": "q54",
+      "text": "Remind me: the documentation site is built with mdbook.",
+      "relevant_ids": [
+        "d23"
+      ]
+    },
+    {
+      "id": "q55",
+      "text": "learned japanese two years reached",
+      "relevant_ids": [
+        "d24"
+      ]
+    },
+    {
+      "id": "q56",
+      "text": "Tell me about learned japanese two years reached.",
+      "relevant_ids": [
+        "d24"
+      ]
+    },
+    {
+      "id": "q57",
+      "text": "build cache lives tmp cleared",
+      "relevant_ids": [
+        "d25"
+      ]
+    },
+    {
+      "id": "q58",
+      "text": "What do we know about: build cache lives tmp cleared?",
+      "relevant_ids": [
+        "d25"
+      ]
+    },
+    {
+      "id": "q59",
+      "text": "build cache lives tmp cleared also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d25"
+      ]
+    },
+    {
+      "id": "q60",
+      "text": "eve maintains observability stack prometheus",
+      "relevant_ids": [
+        "d26"
+      ]
+    },
+    {
+      "id": "q61",
+      "text": "Remind me: eve maintains the observability stack with prometheus and grafana.",
+      "relevant_ids": [
+        "d26"
+      ]
+    },
+    {
+      "id": "q62",
+      "text": "default theme dark mode high",
+      "relevant_ids": [
+        "d27"
+      ]
+    },
+    {
+      "id": "q63",
+      "text": "Tell me about default theme dark mode high.",
+      "relevant_ids": [
+        "d27"
+      ]
+    },
+    {
+      "id": "q64",
+      "text": "user's cat named mochi sleeps",
+      "relevant_ids": [
+        "d28"
+      ]
+    },
+    {
+      "id": "q65",
+      "text": "What do we know about: user's cat named mochi sleeps?",
+      "relevant_ids": [
+        "d28"
+      ]
+    },
+    {
+      "id": "q66",
+      "text": "user's cat named mochi sleeps also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d28"
+      ]
+    },
+    {
+      "id": "q67",
+      "text": "api gateway enforces 30-second timeout",
+      "relevant_ids": [
+        "d29"
+      ]
+    },
+    {
+      "id": "q68",
+      "text": "Remind me: the api gateway enforces a 30-second timeout per request.",
+      "relevant_ids": [
+        "d29"
+      ]
+    },
+    {
+      "id": "q69",
+      "text": "weekend plan hiking trip northern",
+      "relevant_ids": [
+        "d30"
+      ]
+    },
+    {
+      "id": "q70",
+      "text": "Tell me about weekend plan hiking trip northern.",
+      "relevant_ids": [
+        "d30"
+      ]
+    },
+    {
+      "id": "q71",
+      "text": "password manager stores secrets encrypted",
+      "relevant_ids": [
+        "d31"
+      ]
+    },
+    {
+      "id": "q72",
+      "text": "What do we know about: password manager stores secrets encrypted?",
+      "relevant_ids": [
+        "d31"
+      ]
+    },
+    {
+      "id": "q73",
+      "text": "password manager stores secrets encrypted also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d31"
+      ]
+    },
+    {
+      "id": "q74",
+      "text": "prefers vim keybindings editor",
+      "relevant_ids": [
+        "d32"
+      ]
+    },
+    {
+      "id": "q75",
+      "text": "Remind me: user prefers vim keybindings in every editor.",
+      "relevant_ids": [
+        "d32"
+      ]
+    },
+    {
+      "id": "q76",
+      "text": "staging environment uses separate postgres",
+      "relevant_ids": [
+        "d33"
+      ]
+    },
+    {
+      "id": "q77",
+      "text": "Tell me about staging environment uses separate postgres.",
+      "relevant_ids": [
+        "d33"
+      ]
+    },
+    {
+      "id": "q78",
+      "text": "lunch usually salad corner deli",
+      "relevant_ids": [
+        "d34"
+      ]
+    },
+    {
+      "id": "q79",
+      "text": "What do we know about: lunch usually salad corner deli?",
+      "relevant_ids": [
+        "d34"
+      ]
+    },
+    {
+      "id": "q80",
+      "text": "lunch usually salad corner deli also what are the coffee shop hours on Market Street",
+      "relevant_ids": [
+        "d34"
+      ]
+    },
+    {
+      "id": "q81",
+      "text": "sdk ships native bindings swift",
+      "relevant_ids": [
+        "d35"
+      ]
+    },
+    {
+      "id": "q82",
+      "text": "Remind me: the sdk ships native bindings for swift and kotlin.",
+      "relevant_ids": [
+        "d35"
+      ]
+    },
+    {
+      "id": "q83",
+      "text": "reads science fiction especially liu",
+      "relevant_ids": [
+        "d36"
+      ]
+    },
+    {
+      "id": "q84",
+      "text": "Tell me about reads science fiction especially liu.",
+      "relevant_ids": [
+        "d36"
+      ]
+    }
+  ]
+}

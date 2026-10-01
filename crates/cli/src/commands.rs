@@ -1,6 +1,7 @@
 use memo::{MemoryController, MemoManager};
 use memo_core::{
-    MemoError, MemoPatch, MemoType, RecallQuery, Relation, RelationKind, Result, SearchQuery,
+    generate_id, now_secs, Memo, MemoError, MemoPatch, MemoType, RecallQuery, Relation,
+    RelationKind, Result, SearchQuery,
 };
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -185,7 +186,36 @@ pub fn search_batch(
 }
 
 /// In-process micro-benchmark: add / search, output as JSON (parsed by the `benches/` Python scripts).
-pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize, batch: bool) -> Result<String> {
+///
+/// Write-path segments (controlled by flags) let the harness compare the long write tail:
+///  - `add_baseline`: default journal (DELETE) + per-item embed + per-item transaction.
+///  - `add_wal`: same naive writes but after `enable_wal()` (WAL journal mode).
+///  - `add_batch_embed`: `manager.add_batch` (batch embed + transactional batch write).
+///  - `add_bulk`: per-item embed but `store.add_batch` (transaction merge only).
+///
+/// `BenchConfig` groups the run options so the `bench` signature stays small while
+/// still exposing the write-tail comparison flags (WAL / batch-embed / bulk).
+pub struct BenchConfig {
+    pub size: usize,
+    pub top_k: usize,
+    pub warmup: usize,
+    pub search_batch: bool,
+    pub wal: bool,
+    pub batch_embed: bool,
+    pub bulk: bool,
+}
+
+/// Search segments (`search` / `batch`) are unchanged from before.
+pub fn bench(manager: &MemoManager, cfg: &BenchConfig) -> Result<String> {
+    let BenchConfig {
+        size,
+        top_k,
+        warmup,
+        search_batch,
+        wal,
+        batch_embed,
+        bulk,
+    } = *cfg;
     if size == 0 {
         return Err(memo_core::MemoError::InvalidParam(
             "bench size must be > 0".into(),
@@ -206,16 +236,89 @@ pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize, ba
         )?;
     }
 
+    let bench_item = |i: usize, r: usize| -> String {
+        format!("bench item {r}-{i}: user prefers rust systems programming and local-first memo {i}")
+    };
+
+    let mut report = serde_json::json!({
+        "system": "aria-memo",
+        "includes_network": false,
+        "offline": true,
+        "size": size,
+        "top_k": top_k,
+        "warmup": warmup,
+    });
+
+    // Baseline: default journal + per-item embed + per-item transaction.
     let mut add_ms: Vec<f64> = Vec::with_capacity(size);
+    reset_corpus(manager);
     for i in 0..size {
-        let content = format!(
-            "bench item {i}: user prefers rust systems programming and local-first memo {i}"
-        );
+        let content = bench_item(i, 0);
         let t0 = std::time::Instant::now();
         manager.add(&content, MemoType::Working, HashMap::new(), 0.5)?;
         add_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
     }
+    report["add_baseline"] = add_segment(&mut add_ms);
 
+    // WAL: enable WAL, then naive per-item writes (isolates journal-mode effect).
+    if wal {
+        manager.store().enable_wal()?;
+        let mut wal_ms: Vec<f64> = Vec::with_capacity(size);
+        reset_corpus(manager);
+        for i in 0..size {
+            let content = bench_item(i, 1);
+            let t0 = std::time::Instant::now();
+            manager.add(&content, MemoType::Working, HashMap::new(), 0.5)?;
+            wal_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        report["add_wal"] = add_segment(&mut wal_ms);
+    }
+
+    // Batch-embed: embed all at once, then a single transactional batch write.
+    if batch_embed {
+        let reps = warmup + 1;
+        let mut per_add: Vec<f64> = Vec::with_capacity(reps);
+        for r in 0..reps {
+            reset_corpus(manager);
+            let contents: Vec<String> = (0..size).map(|i| bench_item(i, r)).collect();
+            let t0 = std::time::Instant::now();
+            manager.add_batch(&contents, MemoType::Working, 0.5)?;
+            per_add.push(t0.elapsed().as_secs_f64() * 1000.0 / size as f64);
+        }
+        report["add_batch_embed"] = add_segment(&mut per_add);
+    }
+
+    // Bulk: per-item embed but merge into one transaction via `store.add_batch`.
+    if bulk {
+        let reps = warmup + 1;
+        let mut per_add: Vec<f64> = Vec::with_capacity(reps);
+        for r in 0..reps {
+            reset_corpus(manager);
+            let now = now_secs();
+            let mut memos: Vec<Memo> = Vec::with_capacity(size);
+            for i in 0..size {
+                let content = bench_item(i, r);
+                let emb = manager.embedder().embed(&content)?;
+                memos.push(Memo {
+                    id: generate_id(),
+                    memo_type: MemoType::Working,
+                    content,
+                    embedding: Some(emb),
+                    metadata: HashMap::new(),
+                    importance: 0.5,
+                    version: 1,
+                    created_at: now,
+                    updated_at: now,
+                });
+            }
+            let t0 = std::time::Instant::now();
+            manager.store().add_batch(&memos)?;
+            per_add.push(t0.elapsed().as_secs_f64() * 1000.0 / size as f64);
+        }
+        report["add_bulk"] = add_segment(&mut per_add);
+    }
+
+    // Search baseline (unchanged).
     let queries = [
         "rust systems programming",
         "local-first memo",
@@ -232,29 +335,10 @@ pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize, ba
         let _ = manager.search(q)?;
         search_ms.push(t0.elapsed().as_secs_f64() * 1000.0);
     }
+    report["search"] = add_segment(&mut search_ms);
 
-    let add_sum: f64 = add_ms.iter().sum();
-    let search_sum: f64 = search_ms.iter().sum();
-    let mut report = serde_json::json!({
-        "system": "aria-memo",
-        "includes_network": false,
-        "offline": true,
-        "size": size,
-        "top_k": top_k,
-        "warmup": warmup,
-        "add": {
-            "p50_ms": percentile(&mut add_ms, 0.50),
-            "p99_ms": percentile(&mut add_ms, 0.99),
-            "ops_per_sec": if add_sum > 0.0 { (size as f64) / (add_sum / 1000.0) } else { 0.0 },
-        },
-        "search": {
-            "p50_ms": percentile(&mut search_ms, 0.50),
-            "p99_ms": percentile(&mut search_ms, 0.99),
-            "ops_per_sec": if search_sum > 0.0 { (size as f64) / (search_sum / 1000.0) } else { 0.0 },
-        },
-    });
     // Optional: batch retrieval throughput (single lock, all queries at once).
-    if batch {
+    if search_batch {
         let batch_queries: Vec<SearchQuery> = (0..size)
             .map(|i| {
                 let mut q = SearchQuery::new(queries[i % queries.len()]);
@@ -274,6 +358,29 @@ pub fn bench(manager: &MemoManager, size: usize, top_k: usize, warmup: usize, ba
         });
     }
     Ok(report.to_string())
+}
+
+/// Summarize a vector of per-add latencies (ms) into p50/p99 and per-second throughput.
+fn add_segment(xs: &mut [f64]) -> serde_json::Value {
+    if xs.is_empty() {
+        return serde_json::json!({ "p50_ms": 0.0, "p99_ms": 0.0, "ops_per_sec": 0.0 });
+    }
+    let sum: f64 = xs.iter().sum();
+    let mean = sum / xs.len() as f64;
+    serde_json::json!({
+        "p50_ms": percentile(xs, 0.50),
+        "p99_ms": percentile(xs, 0.99),
+        "ops_per_sec": if mean > 0.0 { 1000.0 / mean } else { 0.0 },
+    })
+}
+
+/// Clear all stored memories so each benchmark segment starts from an empty corpus.
+fn reset_corpus(manager: &MemoManager) {
+    if let Ok(all) = manager.list(None) {
+        for m in all {
+            let _ = manager.forget(&m.id);
+        }
+    }
 }
 
 fn percentile(xs: &mut [f64], p: f64) -> f64 {
@@ -528,23 +635,74 @@ mod tests {
     #[test]
     fn cli_bench_json_smoke() {
         let m = mgr();
-        let out = bench(&m, 8, 3, 1, false).unwrap();
+        let cfg = BenchConfig {
+            size: 8,
+            top_k: 3,
+            warmup: 1,
+            search_batch: false,
+            wal: false,
+            batch_embed: false,
+            bulk: false,
+        };
+        let out = bench(&m, &cfg).unwrap();
         let v: serde_json::Value = serde_json::from_str(&out).unwrap();
         assert_eq!(v["system"], "aria-memo");
-        assert!(v["add"]["p50_ms"].as_f64().unwrap() >= 0.0);
+        assert!(v["add_baseline"]["p50_ms"].as_f64().unwrap() >= 0.0);
         assert!(v["search"]["ops_per_sec"].as_f64().unwrap() > 0.0);
     }
 
     #[test]
     fn cli_bench_rejects_zero_size() {
         let m = mgr();
-        assert!(bench(&m, 0, 5, 0, false).is_err());
+        let cfg = BenchConfig {
+            size: 0,
+            top_k: 5,
+            warmup: 0,
+            search_batch: false,
+            wal: false,
+            batch_embed: false,
+            bulk: false,
+        };
+        assert!(bench(&m, &cfg).is_err());
     }
 
     #[test]
     fn cli_bench_rejects_zero_topk() {
         let m = mgr();
-        assert!(bench(&m, 5, 0, 0, false).is_err());
+        let cfg = BenchConfig {
+            size: 5,
+            top_k: 0,
+            warmup: 0,
+            search_batch: false,
+            wal: false,
+            batch_embed: false,
+            bulk: false,
+        };
+        assert!(bench(&m, &cfg).is_err());
+    }
+
+    #[test]
+    fn cli_bench_write_tail_segments_present() {
+        let m = mgr();
+        // enable all write-tail segments
+        let cfg = BenchConfig {
+            size: 8,
+            top_k: 3,
+            warmup: 1,
+            search_batch: false,
+            wal: true,
+            batch_embed: true,
+            bulk: true,
+        };
+        let out = bench(&m, &cfg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        // baseline always present; WAL/batch-embed/bulk reported when requested
+        assert!(v["add_baseline"]["p99_ms"].as_f64().is_some());
+        assert!(v["add_wal"]["p99_ms"].as_f64().is_some());
+        assert!(v["add_batch_embed"]["p99_ms"].as_f64().is_some());
+        assert!(v["add_bulk"]["p99_ms"].as_f64().is_some());
+        // search segment untouched
+        assert!(v["search"]["ops_per_sec"].as_f64().unwrap() > 0.0);
     }
 
     #[test]

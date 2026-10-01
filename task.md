@@ -80,6 +80,23 @@
 - 批量：`search-batch --text "a" --text "b"` 返回与输入等长的结果组；`bench --batch --json` 输出 `report["batch"]`。
 - 回退：既有扁平 `search`/`recall` 与 `Memo` 模型行为不变（语义召回不依赖 FTS5）。
 
+## M6 — Track A 扩展：规模曲线 / 本地控制组 / A2 方差 / 写长尾（已落地）
+
+> 需求：放大 size（10k/100k）看延迟与 p99 增长曲线验证亚线性；补控制组 sqlite_vec、chromem 进 track_a 让对比矩阵有真实数值；扩大 A2 查询集（≥50–100 条、复用 Track B 真实语料）给出有统计意义的 recall/MRR 与方差；压测写长尾（批量嵌入、WAL、事务合并）看 add p99 是否收敛。规格见 requirements.md §6.3 / §6.5 / §6.6 / §6.8。
+
+46. [x] Rust 写长尾基座：`Embedder::embed_batch` 默认方法（traits.rs）+ `LocalEmbedder::embed_batch`；`MemoManager::add_batch`（批量嵌入+事务合并）+ `SqliteStore::enable_wal`（`PRAGMA journal_mode=WAL`，trait 默认 no-op）；`MemoStore::enable_wal` 在 `SqliteStore` 覆写。
+47. [x] CLI `bench` 新增 `--wal` / `--batch-embed` / `--bulk`（`BenchConfig` 收口），报告 `add_baseline` / `add_wal` / `add_batch_embed` / `add_bulk` 四分段 p50/p99/ops；`size=0`/`top_k=0` 仍 `InvalidParam`。
+48. [x] 控制组 adapter：`benches/adapters/sqlite_vec.py`（pip `sqlite-vec` + 离线哈希-n-gram 嵌入）、`benches/adapters/chromem.py`（chromem-go 子进程），均 lazy import、缺依赖/二进制则 `SkipBackend`/skip 并写 `reason`；`build_backend` 注册 `sqlite_vec`/`chromem`，默认 `--systems` 纳入。
+49. [x] `metrics/retrieval.py` 增 `mean_std`（样本标准差）；`benches/data/synthetic_retrieval_v2.json`（84 条、关键词/同义改写/干扰项混合）；`track_a/datasets.py` 加载 `synthetic`/`synthetic_v2`/`track_b:locomo_refined`/`track_b:halumem`（缺数据 skip）。
+50. [x] `run_retrieval_quality` 支持 `dataset` 选择、按查询集计算 Recall@k/MRR 及方差（`recall_at_k_std`/`mrr_std`/`n_queries`）；`run_microbench` 改多尺寸 sweep（默认 1k/10k/100k）并输出 `scaling`（p99 增长因子 + 亚线性/线性/超线性判定）；`run.py` 增 `--sizes` / `--a2-dataset` 透传。
+51. [x] 单测（离线、零网络）：`mean_std` 空/单值/样本方差；控制组缺依赖 skip；`load_dataset` 各源（含 track_b 真实 fixtures）；`run_retrieval_quality` 经 fake backend 出方差；`run_microbench` 多尺寸 + scaling 条目。
+52. [x] 验收：Rust `cargo test` + `cargo clippy --all-targets` 全绿（含 embed_batch/add_batch/enable_wal/WAL 生效单测）；benches `python -m unittest tests.test_metrics tests.test_adapters tests.test_track_a` 全绿；`run.py --track a --sizes 20 --a2-dataset synthetic_v2` 端到端冒烟通过。
+
+### M6
+- `run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem` 产出 A1 多尺寸 `scaling`（p99 增长因子 + 亚线性判定）与 A2 `recall_at_k`/`mrr` ± 方差。
+- `aria-memo bench --wal --batch-embed --bulk --json` 输出 `add_baseline`/`add_wal`/`add_batch_embed`/`add_bulk` 四分段，验证 add p99 收敛。
+- 控制组与 Track B 复用集在依赖/数据缺失时 skip 并写 `reason`，不伪造数值。
+
 ## 验证
 
 ### M1

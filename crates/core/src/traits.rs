@@ -35,6 +35,12 @@ pub trait MemoStore: Send + Sync {
         Ok(())
     }
 
+    /// Enable WAL journal mode if the backend supports it (reduces write tail under
+    /// batch/concurrent load). Default is a no-op for backends without a journal.
+    fn enable_wal(&self) -> Result<()> {
+        Ok(())
+    }
+
     // --- Multi-relational memory plane (Jev-Mem inspired) ---
 
     /// Persist a relation edge. Returns `InvalidParam` for a self-loop/invalid edge
@@ -71,6 +77,11 @@ pub trait Embedder: Send + Sync {
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
     /// Vector dimension.
     fn dim(&self) -> usize;
+    /// Batch encode. Default loops `embed` per text; embedders may override to
+    /// share normalization/allocation across the batch (used by write-path batching).
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+        texts.iter().map(|t| self.embed(t)).collect()
+    }
 }
 
 /// Low-level persistence backend abstraction (M1 only implements SQLite; a replicated
@@ -313,6 +324,15 @@ mod tests {
         let e = ConstEmbedder;
         assert_eq!(e.dim(), 3);
         assert_eq!(e.embed("anything").unwrap(), vec![1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn embed_batch_default_loops_embed() {
+        let e = ConstEmbedder;
+        let out = e.embed_batch(&["a", "b", "c"]).unwrap();
+        assert_eq!(out, vec![vec![1.0, 0.0, 0.0]; 3]);
+        // empty batch returns empty
+        assert!(e.embed_batch(&[]).unwrap().is_empty());
     }
 
     fn put(s: &MemStore, id: &str) {

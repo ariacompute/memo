@@ -21,6 +21,14 @@ impl MemoManager {
         Ok(Self::new(embedder, Arc::new(store)))
     }
 
+    /// Convenience constructor using the SQLite backend with WAL journal mode
+    /// enabled (reduces write tail under batch load). See `SqliteStore::enable_wal`.
+    pub fn with_sqlite_wal(embedder: Arc<dyn Embedder>, db_path: &str) -> Result<Self> {
+        let store = SqliteStore::open(db_path)?;
+        store.enable_wal()?;
+        Ok(Self::new(embedder, Arc::new(store)))
+    }
+
     /// Add a memory: automatically embeds and persists it, returning the generated id.
     pub fn add(
         &self,
@@ -51,6 +59,49 @@ impl MemoManager {
         };
         self.store.add(&m)?;
         Ok(m.id)
+    }
+
+    /// Batch add: embed all contents at once (sharing normalization/allocation),
+    /// then persist in a single transactional batch via `store.add_batch`.
+    /// Returns the generated ids in input order. Rejects empty content and
+    /// out-of-range importance up front (before any write).
+    pub fn add_batch(
+        &self,
+        contents: &[String],
+        memo_type: MemoType,
+        importance: f32,
+    ) -> Result<Vec<MemoId>> {
+        if !(0.0..=1.0).contains(&importance) {
+            return Err(MemoError::InvalidParam("importance out of [0,1]".into()));
+        }
+        // Validate contents up front (empty -> EmptyContent) before embedding.
+        for c in contents {
+            if c.trim().is_empty() {
+                return Err(MemoError::EmptyContent);
+            }
+        }
+        let texts: Vec<&str> = contents.iter().map(|s| s.as_str()).collect();
+        let embs = self.embedder.embed_batch(&texts)?;
+        let now = now_secs();
+        let mut memos: Vec<Memo> = Vec::with_capacity(contents.len());
+        for (content, emb) in contents.iter().zip(embs) {
+            if content.trim().is_empty() {
+                return Err(MemoError::EmptyContent);
+            }
+            memos.push(Memo {
+                id: generate_id(),
+                memo_type: memo_type.clone(),
+                content: content.clone(),
+                embedding: Some(emb),
+                metadata: HashMap::new(),
+                importance,
+                version: 1,
+                created_at: now,
+                updated_at: now,
+            });
+        }
+        self.store.add_batch(&memos)?;
+        Ok(memos.into_iter().map(|m| m.id).collect())
     }
 
     pub fn get(&self, id: &MemoId) -> Result<Option<Memo>> {
@@ -551,6 +602,52 @@ mod tests {
         let id = m.add("to forget", MemoType::Working, HashMap::new(), 0.5).unwrap();
         assert!(m.forget(&id).unwrap());
         assert!(!m.forget(&id).unwrap());
+    }
+
+    #[test]
+    fn add_batch_persists_all_and_returns_ids() {
+        let m = mgr();
+        let ids = m
+            .add_batch(
+                &[
+                    "batch item one about rust".to_string(),
+                    "batch item two about systems".to_string(),
+                ],
+                MemoType::Working,
+                0.5,
+            )
+            .unwrap();
+        assert_eq!(ids.len(), 2);
+        assert_eq!(m.list(None).unwrap().len(), 2);
+        // ids are distinct
+        assert_ne!(ids[0], ids[1]);
+    }
+
+    #[test]
+    fn add_batch_rejects_empty_content_and_bad_importance() {
+        let m = mgr();
+        assert!(matches!(
+            m.add_batch(&["ok".to_string(), "  ".to_string()], MemoType::Working, 0.5),
+            Err(MemoError::EmptyContent)
+        ));
+        assert!(matches!(
+            m.add_batch(&["x".to_string()], MemoType::Working, 1.5),
+            Err(MemoError::InvalidParam(_))
+        ));
+        // nothing persisted on rejection
+        assert_eq!(m.list(None).unwrap().len(), 0);
+    }
+
+    #[test]
+    fn with_sqlite_wal_opens_and_writes() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("mgr_wal_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let e: Arc<dyn Embedder> = Arc::new(LocalEmbedder::new(64));
+        let m = MemoManager::with_sqlite_wal(e, path.to_str().unwrap()).unwrap();
+        let id = m.add("wal probe", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        assert!(m.get(&id).unwrap().is_some());
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

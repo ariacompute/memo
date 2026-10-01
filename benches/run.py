@@ -16,7 +16,7 @@ from track_b import BENCHMARKS, dry_run, run_track_b  # noqa: E402
 from adapters import build_backend  # noqa: E402
 from judge import Judge  # noqa: E402
 
-DEFAULT_SYSTEMS = "aria,mem0,memos,mempalace,zep,letta"
+DEFAULT_SYSTEMS = "aria,sqlite_vec,chromem,mem0,memos,mempalace,zep,letta"
 
 
 def parse_csv(raw: str) -> list[str]:
@@ -29,8 +29,18 @@ def main() -> int:
     p.add_argument("--systems", default="aria", help=f"comma list; full set: {DEFAULT_SYSTEMS}")
     p.add_argument("--backend", default=os.environ.get("BENCH_BACKEND", "aria"),
                    help="Track B single backend (default: aria)")
-    p.add_argument("--size", type=int, default=1000, help="Track A corpus size for microbench")
+    p.add_argument("--size", type=int, default=1000, help="Track A corpus size (single-size fallback)")
+    p.add_argument(
+        "--sizes",
+        default=None,
+        help="Track A corpus sizes to sweep, comma-separated (default: 1000,10000,100000)",
+    )
     p.add_argument("--top-k", type=int, default=5)
+    p.add_argument(
+        "--a2-dataset",
+        default="synthetic_v2",
+        help="A2 query corpus: synthetic | synthetic_v2 | track_b:locomo_refined | track_b:halumem",
+    )
     p.add_argument("--warmup", type=int, default=10)
     p.add_argument(
         "--benchmarks",
@@ -59,12 +69,18 @@ def main() -> int:
 
     wrote: list[Path] = []
     if args.track in {"a", "all"}:
+        sizes = (
+            [int(x) for x in args.sizes.split(",") if x.strip()]
+            if args.sizes
+            else [args.size]
+        )
         wrote.append(
             run_track_a(
                 systems=systems,
-                size=args.size,
+                sizes=sizes,
                 top_k=args.top_k,
                 warmup=args.warmup,
+                a2_dataset=args.a2_dataset,
                 out_dir=out,
             )
         )

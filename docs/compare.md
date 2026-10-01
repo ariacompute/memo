@@ -38,6 +38,10 @@
 ## 与评测的对应关系
 
 - **Track A**（`benches/track_a`）：延迟、吞吐、体积、离线、合成 Recall —— 最能体现 aria 差异化。
+  - **多尺寸扩展曲线**：`--sizes 1000,10000,100000` sweep `add`/`search` p99，报告 p99 增长因子与**亚线性/线性/超线性**判定。
+  - **本地控制组**：`sqlite_vec`（SQLite 向量索引）、`chromem`（chromem-go 子进程）纳入默认 `--systems`，与 aria 同场对比；缺依赖/二进制时 skip 并写 `reason`。
+  - **A2 检索质量 + 方差**：`synthetic_v2`（≥50 条真实分布查询）与复用 `track_b:*` 真实语料，输出 Recall@k / MRR 及各自**样本标准差**。
+  - **写长尾压测**：`aria-memo bench --wal --batch-embed --bulk` 对照 `add_baseline` / `add_wal` / `add_batch_embed` / `add_bulk` 的 p50/p99/ops，观察 add p99 收敛。
 - **Track B**（`benches/track_b`）：四基准 ——
   - **locomo_refined**：混合问答，考察 token-F1/BLEU 与严格 judge 准确率。
   - **halumem**：记忆提取/更新/QA 三任务，考察幻觉/更新/遗忘（最需要操作级能力）。
@@ -46,3 +50,15 @@
   - 离线指标（F1/BLEU/多选/Recall@k）零网络可出；judge 指标需 OpenAI 兼容 LLM，缺则 skip 并写 reason。报告分列「离线条件」与「LLM 管线条件」。
 
 生成/更新微基准数字见 [bench_results.md](./bench_results.md) 与 `python benches/run.py`。
+
+## Track A 本地控制组（microbench）
+
+`sqlite_vec` 与 `chromem` 是**本地嵌入式**控制组，用于和 aria 同场对比存储/向量索引与写路径，而非记忆能力本身（两者均无 LLM 抽取/巩固/遗忘）。运行 `python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem` 后，下表填入真实数值：
+
+| 系统 | 类型 | add p99@1k | add p99@10k | add p99@100k | search p99@10k | Recall@k (synthetic_v2) | MRR |
+|------|------|-----------:|------------:|-------------:|---------------:|-------------------------:|----:|
+| aria-memo | 本地 SQLite + FTS5 + 本地嵌入 | _run_ | _run_ | _run_ | _run_ | _run_ | _run_ |
+| sqlite_vec | 本地 SQLite + vec0 向量索引 | _run_ | _run_ | _run_ | _run_ | _run_ | _run_ |
+| chromem | 本地 Go 向量库（子进程） | _run_ | _run_ | _run_ | _run_ | _run_ | _run_ |
+
+> `_run_` = 安装依赖并运行后填充；任一控制组缺失依赖时该列 skip 并写 `reason`，矩阵不伪造数值。写长尾（WAL/批量嵌入/事务合并）对照见 `aria-memo bench --wal --batch-embed --bulk --json` 的 `add_*` 分段。
