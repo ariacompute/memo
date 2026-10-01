@@ -117,30 +117,56 @@ a recorded `reason` when their dependency/binary is missing — never faked).
 
 ```bash
 pip install -r benches/requirements.txt
-python benches/run.py --track a --size 1000
+
+pushd benches/chromem-wrapper
+go get github.com/philippgille/chromem-go@latest && go mod tidy && go build -o chromem .
+export CHROMEM_BIN="$PWD/chromem"
+popd
+
 python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem
-python benches/run.py --track b --dry-run
+python benches/run.py --track b --download
 ```
 
 ### Track A evaluation report
 
-Run with `python benches/run.py --track a --size 1000`
-(results under `benches/results/`, e.g. `20261001T012416Z/track_a.json`).
+Run with `python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem`
+(results under `benches/results/`). This report's figures:
+- aria: `python benches/run.py --track a --sizes 1000,10000,100000 --systems aria`
+- sqlite_vec: `python benches/run.py --track a --sizes 1000,10000,100000 --systems sqlite_vec`
+- chromem: `python benches/run.py --track a --sizes 1000,10000,100000 --systems chromem`
 
-**A1 — Microbench (aria-memo, size=1000, top_k=5, offline):**
+**A1 — Microbench (top_k=5, offline; aria `add_baseline` = per-item embed + per-item txn):**
 
-| Operation | ops/sec | p50 (ms) | p99 (ms) |
-|-----------|--------:|---------:|---------:|
-| `add`     | 298.36  | 2.98     | 9.77     |
-| `search`  | 434.66  | 2.19     | 3.93     |
+| System | Size | Segment | ops/sec | p50 (ms) | p99 (ms) | Note |
+|--------|------|---------|--------:|---------:|---------:|------|
+| aria | 1000 | `add_baseline` | 157.18 | 5.91 | 13.35 | naive per-item path (baseline) |
+| aria | 1000 | `search` | 1456.11 | 0.69 | 0.69 | per-query amortized |
+| aria | 10000 | `add_wal` | 752.06 | 1.06 | 4.08 | WAL journal mode |
+| aria | 10000 | `add_batch_embed` | 40039.03 | 0.02 | 0.02 | batch embed + transactional write |
+| aria | 10000 | `add_bulk` | 72164.68 | 0.01 | 0.01 | per-item embed, txn merge |
+| aria | 10000 | `search` | 140.71 | 7.11 | 7.11 | per-query amortized |
+| aria | 100000 | `add_batch_embed` | 41459.87 | 0.02 | 0.02 | only optimized segment at 100k |
+| aria | 100000 | `search` | 13.65 | 73.25 | 73.25 | per-query amortized (full-corpus scan) |
+| sqlite_vec | 1000 | `add` | 23345.52 | 0.04 | 0.04 | batched insert |
+| sqlite_vec | 1000 | `search` | 592.15 | 1.69 | 1.69 | per-query amortized |
+| sqlite_vec | 10000 | `add` | 22223.95 | 0.04 | 0.04 | batched insert |
+| sqlite_vec | 10000 | `search` | 50.42 | 19.84 | 19.84 | per-query amortized |
+| sqlite_vec | 100000 | `add` | 20212.36 | 0.05 | 0.05 | batched insert |
+| sqlite_vec | 100000 | `search` | 4.58 | 218.25 | 218.25 | per-query amortized (full-corpus scan) |
+| chromem | 1000 | `add` | 22126.47 | 0.05 | 0.05 | batched insert (`add-batch`) |
+| chromem | 1000 | `search` | 208.95 | 4.79 | 4.79 | per-query amortized (`query-batch`) |
+| chromem | 10000 | `add` | 23672.96 | 0.04 | 0.04 | batched insert (`add-batch`) |
+| chromem | 10000 | `search` | 23.08 | 43.34 | 43.34 | per-query amortized (`query-batch`) |
+| chromem | 100000 | `add` | 23089.77 | 0.04 | 0.04 | batched insert (`add-batch`) |
+| chromem | 100000 | `search` | 2.33 | 429.42 | 429.42 | per-query amortized (`query-batch`) |
 
-**A2 — Retrieval quality (synthetic_retrieval.json, 8 queries, top_k=5):**
+**A2 — Retrieval quality (synthetic_v2, 84 queries, top_k=5):**
 
-| System | Recall@5 | MRR  | Queries | Offline |
-|--------|---------:|-----:|--------:|:-------:|
-| aria   | 1.00     | 1.00 | 8       | true    |
-
-> A1 is an in-process (offline) microbenchmark; A2 measures hybrid (semantic + keyword) retrieval on a synthetic dataset. See [docs/compare.md](./docs/compare.md) for the full comparison matrix.
+| System | Recall@5 | MRR | Queries | Offline |
+|--------|---------:|----:|--------:|:-------:|
+| aria | 1.00 | 1.00 | 84 | true |
+| sqlite_vec | 0.9762 | 0.9762 | 84 | true |
+| chromem | 1.00 | 1.00 | 84 | true |
 
 ### Track B evaluation report
 
@@ -161,13 +187,10 @@ LLM-judge metrics are **optional** — skipped silently when no credentials are 
 ```bash
 export BENCH_LLM_API_KEY=sk-...
 export BENCH_LLM_BASE_URL=https://tokenhub.tencentmaas.com
-python benches/run.py --track b --judge-model hy3
+python benches/run.py --track b --download --judge-model hy3
 ```
 
 > Each benchmark falls back to the bundled `benches/data/fixtures/` (synthetic, offline smoke) when real data is absent; `dataset_source` is recorded in the report. Use `--benchmarks`, `--limit`, or `--ingest-only` to scope a run.
-
-> **Timeouts & progress (no silent hangs).** Every aria-memo CLI call has a 120s timeout (override `ARIA_MEMO_TIMEOUT`); the LLM judge has a 30s per-call timeout (override `BENCH_LLM_TIMEOUT`). Both emit `[bench]`/`[judge]` progress to stderr, so a long run stays observable. `--judge-model` requires `BENCH_LLM_API_KEY` (and `BENCH_LLM_BASE_URL` for self-hosted models like `hy3`); without it, judge metrics are skipped and only offline metrics run. Memory-heavy sub-tasks (e.g. `halumem` extraction) issue one judge call per memory — keep the run bounded with `--limit`.
-> **Judge errors are surfaced, not swallowed.** A failing judge call (bad `BENCH_LLM_BASE_URL`/`API_KEY`, unknown model, rate-limit, or an incompatible response shape) prints `[judge] ERROR (first): …` with the HTTP status + body (or exception) **and every URL tried**, then a count every 10 errors. Errored calls are treated as undecidable and skipped — the run still finishes. The judge (a) auto-retries the alternate `/v1` mount on HTTP 404, (b) retries transient failures (timeout / HTTP 429·5xx) with exponential backoff, **escalating the per-call timeout 1×→2×→4×→8×** on retries, and (c) already sends `stream: false` and tolerates chat/completion/streaming responses. Tune with `BENCH_LLM_TIMEOUT` (per-call seconds, default 30) and `BENCH_LLM_RETRIES` (default 2). A persistently high error rate means the endpoint is too slow or misconfigured — raise `BENCH_LLM_TIMEOUT` (e.g. `120`) for long-prompt benchmarks like `halumem`.
 
 **Scoping large real datasets.** Real datasets can be huge — e.g. `halumem` (HaluMem-Medium) holds ~75k `add` calls. `--limit N` bounds how many samples are *ingested and evaluated* per benchmark (for `halumem` each record is one sample set; for `locomo_refined`/`longmemeval`/`personamem` it caps questions/items). When `--limit` is omitted, a default cap of `50` samples/benchmark is applied (printed to stderr) so an unbounded run does not hang. Ingestion prints progress to stderr (`[bench] ingest 500/N ... ingest done`).
 
@@ -178,24 +201,6 @@ python benches/run.py --track b --limit 2
 cargo build -p aria-memo --release
 python benches/run.py --track b --benchmarks halumem
 ```
-
-**Offline results — this run (`20261001T014217Z/track_b.json`, real datasets, judge unavailable):**
-
-All four benchmarks ran on the bundled real datasets; the LLM judge was **not** available (`BENCH_LLM_API_KEY` absent → `judge.available=false`, 0 calls), so every LLM-dependent metric is `skipped`. Only offline metrics are reported:
-
-| Benchmark | Offline metric | Value | Subset / note |
-|-----------|---------------|------:|---------------|
-| `locomo_refined` | F1 | 0.008 / 0.006 / 0.026 | subsets 1/2/3 (no LLM answer gen) |
-| `locomo_refined` | BLEU | 0.004 / 0.003 / 0.014 | subsets 1/2/3 |
-| `locomo_refined` | judge_accuracy | skipped | no LLM judge |
-| `halumem` | retrieval_recall@5 | 1.00 | extraction subset — retrieval OK |
-| `halumem` | retrieval_recall@5 | 0.00 | qa subset |
-| `halumem` | memory_recall / memory_accuracy / false_memory_resistance / f1 / qa_accuracy | skipped | no LLM judge |
-| `longmemeval` | retrieval_recall@5 | 0.00 | offline |
-| `longmemeval` | qa_accuracy | skipped | no LLM judge |
-| `personamem` | multiple_choice_accuracy | 0.00 | offline (no LLM answering) |
-
-Takeaway: with **no LLM judge**, Track B cannot score generative QA quality — offline metrics only confirm that retrieval works for `halumem` extraction (recall@5 = 1.00), while other retrieval/multiple-choice signals are near zero. The `halumem` `updating` subset metrics are also skipped because that dataset has no update-type questions. Meaningful quality numbers require the LLM-judge path (set `BENCH_LLM_API_KEY`) or a larger offline signal set.
 
 ## Directory
 

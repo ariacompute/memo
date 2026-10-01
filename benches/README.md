@@ -67,7 +67,7 @@ python benches/run.py --track all --size 500 --dry-run
 | `CHROMEM_BIN` | chromem-go 可执行文件路径（控制组；缺则 skip） |
 | `CHROMEM_TIMEOUT` | chromem 子进程超时秒（默认 120） |
 
-控制组依赖（本地、离线）：`pip install sqlite-vec`（sqlite_vec）；chromem 需自行提供 chromem-go 二进制（设 `CHROMEM_BIN`）。两者缺失时 Track A 报告自动 skip 并写 `reason`，**不伪造数值**。
+控制组依赖（本地、离线）：`pip install sqlite-vec`（sqlite_vec）；chromem 需自行提供 chromem-go 二进制（设 `CHROMEM_BIN`）。两者缺失时 Track A 报告自动 skip 并写 `reason`，**不伪造数值**。chromem 的最小 Go CLI wrapper（匹配 adapter 期望的 `add`/`add-batch`/`query` 接口、离线嵌入、批量插入避免逐条子进程风暴）见 [`chromem-wrapper/`](./chromem-wrapper/README.md)。
 
 缺 judge 密钥时 judge 指标 **skip** 并写入 `reason`，不伪造分数；离线指标照常出分。其他系统 adapter 不可用时 skip 并写 `reason`。
 

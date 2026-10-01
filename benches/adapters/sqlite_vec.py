@@ -10,6 +10,7 @@ project's "missing dependency -> skip, never fabricate numbers" rule.
 """
 
 import sqlite3
+import struct
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -45,6 +46,16 @@ def _embed(text: str, dim: int = DEFAULT_DIM) -> list[float]:
     if norm == 0.0:
         return [0.0] * dim
     return [v / norm for v in vec]
+
+
+def _to_blob(vec: list[float]) -> bytes:
+    """Pack a float vector as a little-endian float32 blob for sqlite-vec.
+
+    sqlite-vec's `vec0` virtual table binds embeddings as a packed `bytes` object
+    (not a Python `list`, which Python's sqlite3 driver refuses to bind — that
+    produced the earlier `Error binding parameter 2: type 'list' is not supported`).
+    """
+    return struct.pack(f"<{len(vec)}f", *vec)
 
 
 class SqliteVecBackend(MemoBackend):
@@ -94,6 +105,12 @@ class SqliteVecBackend(MemoBackend):
         self._conn.execute(
             f"CREATE VIRTUAL TABLE IF NOT EXISTS memo_vec USING vec0(embedding float[{self._dim}])"
         )
+        # Speed: WAL + synchronous=NORMAL so large corpora don't fsync on every
+        # commit. Without this, add()'s per-insert commit() does 100k fsyncs at
+        # size=100000 and the microbench appears to hang. Per-add timing is
+        # preserved (commit() still runs), just without the disk flush cost.
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
         self._conn.commit()
         self._next_id = 0
 
@@ -108,7 +125,7 @@ class SqliteVecBackend(MemoBackend):
             "INSERT INTO memos (id, content, meta) VALUES (?, ?, ?)", (mid, content, "")
         )
         self._conn.execute(
-            "INSERT INTO memo_vec(rowid, embedding) VALUES (?, ?)", (mid, vec)
+            "INSERT INTO memo_vec(rowid, embedding) VALUES (?, ?)", (mid, _to_blob(vec))
         )
         self._conn.commit()
         return str(mid)
@@ -122,7 +139,7 @@ class SqliteVecBackend(MemoBackend):
             "SELECT m.id, m.content, vec_distance_L2(v.embedding, ?) AS d "
             "FROM memo_vec v JOIN memos m ON m.id = v.rowid "
             "ORDER BY d LIMIT ?",
-            (qv, top_k),
+            (_to_blob(qv), top_k),
         ).fetchall()
         hits: list[SearchHit] = []
         for mid, content, d in rows:
@@ -130,6 +147,55 @@ class SqliteVecBackend(MemoBackend):
             score = 1.0 / (1.0 + float(d))
             hits.append(SearchHit(id=str(mid), content=content, score=score))
         return hits
+
+    def search_batch(self, queries: list[str], top_k: int = 5) -> list[list[SearchHit]]:
+        """Batched query: serve every query in one in-process call (no per-query round trip).
+
+        The harness amortizes the per-query latency across `size` samples, which avoids the
+        O(n^2) cost of looping `search()` `size` times at large corpora (vec0 does a full
+        linear scan per query, so 100k×100k would take tens of minutes and appear to hang).
+        """
+        if self._conn is None:
+            self.reset()
+        assert self._conn is not None
+        results: list[list[SearchHit]] = []
+        for q in queries:
+            qv = _embed(q, self._dim)
+            rows = self._conn.execute(
+                "SELECT m.id, m.content, vec_distance_L2(v.embedding, ?) AS d "
+                "FROM memo_vec v JOIN memos m ON m.id = v.rowid "
+                "ORDER BY d LIMIT ?",
+                (_to_blob(qv), top_k),
+            ).fetchall()
+            hits: list[SearchHit] = []
+            for mid, content, d in rows:
+                score = 1.0 / (1.0 + float(d))
+                hits.append(SearchHit(id=str(mid), content=content, score=score))
+            results.append(hits)
+        return results
+
+    def add_batch(self, contents: list[str]) -> int:
+        """Batched insert: one transactional write for the whole corpus (mirrors chromem's
+        `add-batch`). Avoids 100k per-item commits and keeps the 100k microbench fast.
+        """
+        if self._conn is None:
+            self.reset()
+        assert self._conn is not None
+        memo_rows: list[tuple[int, str, str]] = []
+        vec_rows: list[tuple[int, bytes]] = []
+        for c in contents:
+            self._next_id += 1
+            mid = self._next_id
+            memo_rows.append((mid, c, ""))
+            vec_rows.append((mid, _to_blob(_embed(c, self._dim))))
+        self._conn.executemany(
+            "INSERT INTO memos (id, content, meta) VALUES (?, ?, ?)", memo_rows
+        )
+        self._conn.executemany(
+            "INSERT INTO memo_vec(rowid, embedding) VALUES (?, ?)", vec_rows
+        )
+        self._conn.commit()
+        return len(contents)
 
     def close(self) -> None:
         if self._conn is not None:

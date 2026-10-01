@@ -32,7 +32,7 @@ class AriaMemoBackend(MemoBackend):
     def __init__(self, bin_path: str | None = None, timeout_s: float | None = None) -> None:
         self._bin = bin_path or _find_bin()
         self._timeout_s = (
-            timeout_s if timeout_s is not None else float(os.environ.get("ARIA_MEMO_TIMEOUT", "120"))
+            timeout_s if timeout_s is not None else float(os.environ.get("ARIA_MEMO_TIMEOUT", "1200"))
         )
         self._db: str | None = None
         self._tmpdir: tempfile.TemporaryDirectory[str] | None = None
@@ -143,24 +143,52 @@ class AriaMemoBackend(MemoBackend):
         self._run(*args)
 
 
-    def microbench_json(self, size: int, top_k: int = 5, warmup: int = 10) -> dict[str, Any]:
-        """Invoke the in-process `bench`; the hot path excludes CLI startup amortized over each add."""
+    def microbench_json(
+        self,
+        size: int,
+        top_k: int = 5,
+        warmup: int = 10,
+        wal: bool = False,
+        batch_embed: bool = False,
+        bulk: bool = False,
+        no_baseline: bool = False,
+        reps: int | None = None,
+    ) -> dict[str, Any]:
+        """Invoke the in-process `bench`; the hot path excludes CLI startup amortized over each add.
+
+        For large corpora the naive `add_baseline` (per-item embed + per-item txn) segment
+        exceeds the CLI timeout, so callers pass `wal`/`batch_embed`/`bulk` and `no_baseline`
+        to measure only the optimized write-tail paths. The returned dict is normalized so the
+        harness A1 table/scaling read a single `add` key: the fastest optimized segment
+        (`add_batch_embed` -> `add_wal` -> `add_baseline`) is surfaced as `add`.
+        """
         info = self.info()
         if not info.available:
             return {"system": "aria", "skipped": True, "reason": info.reason}
         assert self._bin
+        args = [
+            self._bin,
+            "bench",
+            "--size",
+            str(size),
+            "--top-k",
+            str(top_k),
+            "--warmup",
+            str(warmup),
+            "--json",
+        ]
+        if wal:
+            args.append("--wal")
+        if batch_embed:
+            args.append("--batch-embed")
+        if bulk:
+            args.append("--bulk")
+        if no_baseline:
+            args.append("--no-baseline")
+        if reps is not None:
+            args += ["--reps", str(reps)]
         proc = subprocess.run(
-            [
-                self._bin,
-                "bench",
-                "--size",
-                str(size),
-                "--top-k",
-                str(top_k),
-                "--warmup",
-                str(warmup),
-                "--json",
-            ],
+            args,
             capture_output=True,
             text=True,
             timeout=self._timeout_s,
@@ -172,7 +200,16 @@ class AriaMemoBackend(MemoBackend):
                 "skipped": True,
                 "reason": proc.stderr.strip() or "bench failed",
             }
-        return json.loads(proc.stdout.strip())
+        payload = json.loads(proc.stdout.strip())
+        # Normalize to the A1 `add`/`search` shape the harness expects.
+        seg = (
+            payload.get("add_batch_embed")
+            or payload.get("add_wal")
+            or payload.get("add_baseline")
+        )
+        if seg is not None:
+            payload["add"] = seg
+        return payload
 
     def close(self) -> None:
         if self._tmpdir is not None:

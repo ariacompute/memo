@@ -25,6 +25,7 @@ target
 memo.db
 
 # Benchmark: user-downloaded real datasets and generated reports (run artifacts)
+benches/chromem-wrapper/chromem
 benches/data/locomo_refined/
 benches/data/halumem/
 benches/data/longmemeval/

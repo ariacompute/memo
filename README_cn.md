@@ -103,30 +103,56 @@ cargo run -p aria-memo -- search --text "Rust" --graph
 
 ```bash
 pip install -r benches/requirements.txt
-python benches/run.py --track a --size 1000
+
+pushd benches/chromem-wrapper
+go get github.com/philippgille/chromem-go@latest && go mod tidy && go build -o chromem .
+export CHROMEM_BIN="$PWD/chromem"
+popd
+
 python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem
-python benches/run.py --track b --dry-run
+python benches/run.py --track b --download
 ```
 
 ### Track A 评测报告
 
-运行：`python benches/run.py --track a --size 1000`
-（结果位于 `benches/results/`，例如 `20261001T012416Z/track_a.json`）。
+运行：`python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem`
+（结果位于 `benches/results/`）。本报告数据：
+- aria：`python benches/run.py --track a --sizes 1000,10000,100000 --systems aria`
+- sqlite_vec：`python benches/run.py --track a --sizes 1000,10000,100000 --systems sqlite_vec`
+- chromem：`python benches/run.py --track a --sizes 1000,10000,100000 --systems chromem`
 
-**A1 — 微基准（aria-memo，size=1000，top_k=5，离线）：**
+**A1 — 微基准（top_k=5，离线；aria `add_baseline` = 逐条嵌入 + 逐条事务）：**
 
-| 操作    | ops/秒 | p50 (ms) | p99 (ms) |
-|---------|-------:|---------:|---------:|
-| `add`   | 298.36 | 2.98     | 9.77     |
-| `search`| 434.66 | 2.19     | 3.93     |
+| 系统 | 尺寸 | 分段 | ops/秒 | p50 (ms) | p99 (ms) | 说明 |
+|------|------|------|-------:|---------:|---------:|------|
+| aria | 1000 | `add_baseline` | 157.18 | 5.91 | 13.35 | 朴素逐条路径（基线） |
+| aria | 1000 | `search` | 1456.11 | 0.69 | 0.69 | 单 query 均摊 |
+| aria | 10000 | `add_wal` | 752.06 | 1.06 | 4.08 | WAL 日志模式 |
+| aria | 10000 | `add_batch_embed` | 40039.03 | 0.02 | 0.02 | 批量嵌入 + 事务写入 |
+| aria | 10000 | `add_bulk` | 72164.68 | 0.01 | 0.01 | 逐条嵌入，事务合并 |
+| aria | 10000 | `search` | 140.71 | 7.11 | 7.11 | 单 query 均摊 |
+| aria | 100000 | `add_batch_embed` | 41459.87 | 0.02 | 0.02 | 100k 仅测此优化分段 |
+| aria | 100000 | `search` | 13.65 | 73.25 | 73.25 | 单 query 均摊（全语料扫描） |
+| sqlite_vec | 1000 | `add` | 23345.52 | 0.04 | 0.04 | 批量插入 |
+| sqlite_vec | 1000 | `search` | 592.15 | 1.69 | 1.69 | 单 query 均摊 |
+| sqlite_vec | 10000 | `add` | 22223.95 | 0.04 | 0.04 | 批量插入 |
+| sqlite_vec | 10000 | `search` | 50.42 | 19.84 | 19.84 | 单 query 均摊 |
+| sqlite_vec | 100000 | `add` | 20212.36 | 0.05 | 0.05 | 批量插入 |
+| sqlite_vec | 100000 | `search` | 4.58 | 218.25 | 218.25 | 单 query 均摊（全语料扫描） |
+| chromem | 1000 | `add` | 22126.47 | 0.05 | 0.05 | 批量插入（`add-batch`） |
+| chromem | 1000 | `search` | 208.95 | 4.79 | 4.79 | 单 query 均摊（`query-batch`） |
+| chromem | 10000 | `add` | 23672.96 | 0.04 | 0.04 | 批量插入（`add-batch`） |
+| chromem | 10000 | `search` | 23.08 | 43.34 | 43.34 | 单 query 均摊（`query-batch`） |
+| chromem | 100000 | `add` | 23089.77 | 0.04 | 0.04 | 批量插入（`add-batch`） |
+| chromem | 100000 | `search` | 2.33 | 429.42 | 429.42 | 单 query 均摊（`query-batch`） |
 
-**A2 — 检索质量（synthetic_retrieval.json，8 条查询，top_k=5）：**
+**A2 — 检索质量（synthetic_v2，84 条查询，top_k=5）：**
 
-| 系统  | Recall@5 | MRR  | 查询数 | 离线  |
-|-------|---------:|-----:|-------:|:-----:|
-| aria  | 1.00     | 1.00 | 8      | true  |
-
-> A1 为进程内（离线）微基准；A2 在合成数据集上衡量混合（语义 + 关键词）检索质量。完整对比矩阵见 [docs/compare.md](./docs/compare.md)。
+| 系统 | Recall@5 | MRR | 查询数 | 离线 |
+|------|---------:|----:|-------:|-----:|
+| aria | 1.00 | 1.00 | 84 | true |
+| sqlite_vec | 0.9762 | 0.9762 | 84 | true |
+| chromem | 1.00 | 1.00 | 84 | true |
 
 ### Track B 评测报告
 
@@ -147,13 +173,10 @@ LLM judge 指标为**可选**：无凭据时静默跳过：
 ```bash
 export BENCH_LLM_API_KEY=sk-...
 export BENCH_LLM_BASE_URL=https://tokenhub.tencentmaas.com
-python benches/run.py --track b --judge-model hy3
+python benches/run.py --track b --download --judge-model hy3
 ```
 
 > 各基准在缺少真实数据时会回退到仓库内置 `benches/data/fixtures/`（合成样本，离线冒烟），报告中以 `dataset_source` 标注。可用 `--benchmarks`、`--limit`、`--ingest-only` 限定评测范围。
-
-> **超时与进度（避免静默卡死）。** 每次 aria-memo CLI 调用有 120s 超时（可用 `ARIA_MEMO_TIMEOUT` 覆盖）；LLM judge 每次调用 30s 超时（可用 `BENCH_LLM_TIMEOUT` 覆盖）。两者都会向 stderr 输出 `[bench]`/`[judge]` 进度，长任务可见其进行。使用 `--judge-model` 需设置 `BENCH_LLM_API_KEY`（自托管模型如 `hy3` 还需 `BENCH_LLM_BASE_URL`）；未设置时 judge 指标跳过，仅跑离线指标。记忆密集的子任务（如 `halumem` extraction）会对每条记忆发起一次 judge 调用——请用 `--limit` 控制规模。
-> **Judge 错误会暴露而非吞掉。** judge 调用失败（`BENCH_LLM_BASE_URL`/`API_KEY` 错误、模型不存在、限流或响应格式不兼容）会打印 `[judge] ERROR (first): …`，含 HTTP 状态码与响应体（或异常信息）**以及所有尝试过的 URL**，之后每 10 次错误汇总一次。失败调用视为不可判定并跳过——运行仍会结束。judge 会：(a) HTTP 404 时自动重试另一种 `/v1` 挂载；(b) 对瞬时失败（超时 / HTTP 429·5xx）做指数退避重试，**且重试时把单次超时按 1×→2×→4×→8× 放大**；(c) 已发送 `stream: false` 并兼容 chat/completion/streaming 三种响应形态。可用 `BENCH_LLM_TIMEOUT`（单次秒数，默认 30）与 `BENCH_LLM_RETRIES`（默认 2）调参。若仍高错误率，说明端点太慢或配置有误——对有长输入提示的基准（如 `halumem`）请调大 `BENCH_LLM_TIMEOUT`（如 `120`）。
 
 **限定大型真实数据集。** 真实数据集可能非常大——例如 `halumem`（HaluMem-Medium）约需 7.5 万次 `add` 调用。`--limit N` 限定每个基准**注入与评测**的样本数（对 `halumem` 每个记录为一个样本集；对 `locomo_refined`/`longmemeval`/`personamem` 则限制问题/条目数）。省略 `--limit` 时，默认对每个基准施加 `50` 样本上限（会打印到 stderr），避免无界运行卡死。注入过程会向 stderr 输出进度（`[bench] ingest 500/N ... ingest done`）。
 
@@ -165,23 +188,7 @@ cargo build -p aria-memo --release
 python benches/run.py --track b --benchmarks halumem
 ```
 
-**离线结果 —— 本次运行（`20261001T014217Z/track_b.json`，真实数据集，judge 不可用）：**
 
-四个基准均在仓库内置真实数据集上运行；LLM judge **未**可用（`BENCH_LLM_API_KEY` 缺失 → `judge.available=false`，0 次调用），因此所有依赖 LLM 的指标均为 `skipped`。仅汇报离线指标：
-
-| 基准 | 离线指标 | 数值 | 子集 / 说明 |
-|------|---------|------:|------------|
-| `locomo_refined` | F1 | 0.008 / 0.006 / 0.026 | 子集 1/2/3（无 LLM 答案生成） |
-| `locomo_refined` | BLEU | 0.004 / 0.003 / 0.014 | 子集 1/2/3 |
-| `locomo_refined` | judge_accuracy | skipped | 无 LLM judge |
-| `halumem` | retrieval_recall@5 | 1.00 | extraction 子集 —— 检索正常 |
-| `halumem` | retrieval_recall@5 | 0.00 | qa 子集 |
-| `halumem` | memory_recall / memory_accuracy / false_memory_resistance / f1 / qa_accuracy | skipped | 无 LLM judge |
-| `longmemeval` | retrieval_recall@5 | 0.00 | 离线 |
-| `longmemeval` | qa_accuracy | skipped | 无 LLM judge |
-| `personamem` | multiple_choice_accuracy | 0.00 | 离线（无 LLM 作答） |
-
-小结：在**无 LLM judge** 条件下，Track B 无法对生成式 QA 质量打分——离线指标仅确认 `halumem` extraction 的检索可用（recall@5 = 1.00），其余检索/多选信号接近 0；`halumem` 的 `updating` 子集指标也因该数据集无 update 类问题而 skipped。有意义的质检分数需要开启 LLM-judge 路径（设置 `BENCH_LLM_API_KEY`）或扩充离线信号集。
 
 ## 目录
 

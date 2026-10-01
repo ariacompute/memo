@@ -177,6 +177,13 @@ enum Command {
         /// Measure the `add_bulk` segment (per-item embed + transaction merge)
         #[arg(long, default_value_t = false)]
         bulk: bool,
+        /// Skip the `add_baseline` (per-item embed + per-item txn) segment. Use for
+        /// large corpora where the naive path would exceed the CLI timeout.
+        #[arg(long, default_value_t = false)]
+        no_baseline: bool,
+        /// Override repetitions for the batched write-tail segments (default: warmup+1).
+        #[arg(long)]
+        reps: Option<usize>,
     },
     /// Write CLI config (~/.ariacompute/memo-cli.yml)
     Setup(Box<SetupArgs>),
@@ -214,6 +221,8 @@ fn run(cli: Cli) -> Result<()> {
             wal,
             batch_embed,
             bulk,
+            no_baseline,
+            reps,
         } => {
             let path = std::env::temp_dir().join(format!(
                 "aria-memo-bench-{}.db",
@@ -229,6 +238,8 @@ fn run(cli: Cli) -> Result<()> {
                 wal,
                 batch_embed,
                 bulk,
+                baseline: !no_baseline,
+                reps,
             };
             println!("{}", commands::bench(&manager, &cfg)?);
             let _ = std::fs::remove_file(&path);
