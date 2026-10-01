@@ -92,11 +92,13 @@ def run(
 
     scores: list[Score] = []
     rel_pairs = []
-    for item in dataset.items:
+    for i, item in enumerate(dataset.items):
         gold = item.get("answer", "")
         gold = gold if isinstance(gold, str) else " ".join(gold)
         hits = backend.search(item["question"], 5)
         rel_pairs.append(([gold], [h.content for h in hits]))
+        if (i + 1) % 10 == 0:
+            print(f"[longmemeval] score {i + 1}/{len(dataset.items)}", file=sys.stderr, flush=True)
     if rel_pairs:
         r, _, _ = retrieval_hit_rate(rel_pairs, 5)
         scores.append(Score(name="retrieval_recall@5", value=r, requires_llm=False, subset="all"))
@@ -108,13 +110,15 @@ def run(
     else:
         correct = 0
         total = len(dataset.items)
-        for item in dataset.items:
+        for i, item in enumerate(dataset.items):
             gold = item.get("answer", "")
             gold = gold if isinstance(gold, str) else " ".join(gold)
             pred = _answer(backend, item["question"], 5)
             ok = judge.judge(item["question"], gold, pred)
             if ok is not None and ok:
                 correct += 1
+            if (i + 1) % 10 == 0:
+                print(f"[longmemeval] judge {i + 1}/{total}", file=sys.stderr, flush=True)
         acc = correct / total if total else 0.0
         scores.append(Score(name="qa_accuracy", value=acc, requires_llm=True, subset="all"))
     return scores

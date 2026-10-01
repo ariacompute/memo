@@ -29,8 +29,11 @@ def _find_bin() -> str | None:
 class AriaMemoBackend(MemoBackend):
     """Drive aria-memo via CLI (local SQLite, zero network)."""
 
-    def __init__(self, bin_path: str | None = None) -> None:
+    def __init__(self, bin_path: str | None = None, timeout_s: float | None = None) -> None:
         self._bin = bin_path or _find_bin()
+        self._timeout_s = (
+            timeout_s if timeout_s is not None else float(os.environ.get("ARIA_MEMO_TIMEOUT", "120"))
+        )
         self._db: str | None = None
         self._tmpdir: tempfile.TemporaryDirectory[str] | None = None
 
@@ -64,7 +67,14 @@ class AriaMemoBackend(MemoBackend):
     def _run(self, *args: str) -> str:
         self._ensure()
         cmd = [self._bin, "--db", self._db or "memo.db", *args]
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        try:
+            proc = subprocess.run(
+                cmd, capture_output=True, text=True, check=False, timeout=self._timeout_s
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"aria-memo CLI timed out after {self._timeout_s}s: {' '.join(cmd)}"
+            ) from None
         if proc.returncode != 0:
             raise RuntimeError(proc.stderr.strip() or proc.stdout.strip() or "cli failed")
         return proc.stdout.strip()
@@ -153,6 +163,7 @@ class AriaMemoBackend(MemoBackend):
             ],
             capture_output=True,
             text=True,
+            timeout=self._timeout_s,
             check=False,
         )
         if proc.returncode != 0:

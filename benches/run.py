@@ -44,6 +44,8 @@ def main() -> int:
     p.add_argument("--download", action="store_true",
                    help="auto-attempt to download missing datasets before running")
     p.add_argument("--judge-model", default=None, help="LLM judge model override (requires BENCH_LLM_API_KEY)")
+    p.add_argument("--judge-timeout", type=float, default=None,
+                   help="per-call LLM judge timeout in seconds (default 30; env BENCH_LLM_TIMEOUT)")
     p.add_argument(
         "--out",
         default="",
@@ -83,7 +85,9 @@ def main() -> int:
         if not info.available:
             print(f"[skip] backend '{args.backend}' unavailable: {info.reason}", file=sys.stderr)
         else:
-            judge = None if args.dry_run else Judge.from_env(model_override=args.judge_model)
+            judge = None if args.dry_run else Judge.from_env(
+                model_override=args.judge_model, timeout_s=args.judge_timeout
+            )
             if judge is None and not args.dry_run:
                 print("[note] no LLM judge credentials (BENCH_LLM_API_KEY); "
                       "judge metrics will be skipped", file=sys.stderr)

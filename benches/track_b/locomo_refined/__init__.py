@@ -128,7 +128,7 @@ def run(
     judge_correct = 0
     judge_total = 0
 
-    for q in dataset.questions:
+    for i, q in enumerate(dataset.questions):
         golds = q.get("answer", []) or []
         if isinstance(golds, str):
             golds = [golds]
@@ -141,6 +141,8 @@ def run(
             if ok is not None:
                 judge_total += 1
                 judge_correct += 1 if ok else 0
+        if (i + 1) % 10 == 0:
+            print(f"[locomo] score {i + 1}/{len(dataset.questions)}", file=sys.stderr, flush=True)
 
     scores: list[Score] = []
     for cat, vals in f1_by_cat.items():

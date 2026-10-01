@@ -20,6 +20,7 @@ Data:
 from __future__ import annotations
 
 import json
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -123,12 +124,15 @@ def _run_extraction(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> l
     scores: list[Score] = []
     # retrieval-layer Recall@k: treat ground-truth memories as relevant and check whether their content is hit
     rel_pairs = []
-    for m in ds.memories:
+    for idx, m in enumerate(ds.memories):
         if m.get("Distraction"):
             continue
         hits = backend.search(m["Content"], 5)
         retrieved = [h.content for h in hits]
         rel_pairs.append(([m["Content"]], retrieved))
+        if (idx + 1) % 200 == 0:
+            print(f"[halumem] extract retrieval {idx + 1}/{len(ds.memories)}",
+                  file=sys.stderr, flush=True)
     if rel_pairs:
         from metrics.retrieval import retrieval_hit_rate
 
@@ -142,16 +146,20 @@ def _run_extraction(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> l
             )
     else:
         # compare extracted memories with gold via the judge (synthetic: direct gold comparison)
+        extracted = backend.list_memories() if backend.supports("list_memories") else []
+        texts = [e.content for e in extracted] if extracted else []
         correct = 0
-        total = len(ds.memories)
-        for m in ds.memories:
+        total = 0
+        for idx, m in enumerate(ds.memories):
             if m.get("Distraction"):
                 continue
-            extracted = backend.list_memories() if backend.supports("list_memories") else []
-            texts = [e.content for e in extracted] if extracted else []
+            total += 1
             ok = judge.judge("Extract the memory", m["Content"], " ".join(texts))
             if ok is not None and ok:
                 correct += 1
+            if (idx + 1) % 25 == 0:
+                print(f"[halumem] extract judge {idx + 1}/{len(ds.memories)}",
+                      file=sys.stderr, flush=True)
         acc = correct / total if total else 0.0
         scores.append(Score(name="memory_accuracy", value=acc, requires_llm=True, subset="extraction"))
         scores.append(Score(name="memory_recall", value=acc, requires_llm=True, subset="extraction"))
@@ -204,11 +212,14 @@ def _run_updating(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> lis
 def _run_qa(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> list[Score]:
     scores: list[Score] = []
     rel_pairs = []
-    for q in ds.questions:
+    for qi, q in enumerate(ds.questions):
         golds = q.get("Answer", []) or []
         golds = [golds] if isinstance(golds, str) else golds
         hits = backend.search(q["Question"], 5)
         rel_pairs.append((golds, [h.content for h in hits]))
+        if (qi + 1) % 25 == 0:
+            print(f"[halumem] qa retrieval {qi + 1}/{len(ds.questions)}",
+                  file=sys.stderr, flush=True)
     from metrics.retrieval import retrieval_hit_rate
 
     if rel_pairs:
@@ -225,13 +236,15 @@ def _run_qa(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> list[Scor
     else:
         correct = 0
         total = len(ds.questions)
-        for q in ds.questions:
+        for qi, q in enumerate(ds.questions):
             golds = q.get("Answer", []) or []
             golds = [golds] if isinstance(golds, str) else golds
             pred = _answer(backend, q["Question"], 5)
             ok = judge.judge(q["Question"], " ".join(golds), pred)
             if ok is not None and ok:
                 correct += 1
+            if (qi + 1) % 25 == 0:
+                print(f"[halumem] qa judge {qi + 1}/{total}", file=sys.stderr, flush=True)
         acc = correct / total if total else 0.0
         scores.append(Score(name="qa_accuracy", value=acc, requires_llm=True, subset="qa"))
         scores.append(Score(name="hallucination_rate", value=1.0 - acc, requires_llm=True, subset="qa"))

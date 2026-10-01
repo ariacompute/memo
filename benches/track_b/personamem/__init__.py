@@ -165,11 +165,13 @@ def run(
         _ingest(backend, dataset)
 
     rows = []
-    for q in dataset.questions:
+    for i, q in enumerate(dataset.questions):
         hits = backend.search(q.question, top_k)
         # concatenate retrieval results as the "predicted text" and match against the correct option
         pred = " ".join(h.content for h in hits)
         rows.append((q.options, q.gold, pred))
+        if (i + 1) % 25 == 0:
+            print(f"[personamem] score {i + 1}/{len(dataset.questions)}", file=sys.stderr, flush=True)
 
     acc, correct, total = multiple_choice_accuracy(rows)
     return [Score(name="multiple_choice_accuracy", value=acc, requires_llm=False, subset="all")]
