@@ -145,16 +145,19 @@ def _run_extraction(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> l
                 skipped_score(nm, "no LLM judge credentials (BENCH_LLM_API_KEY)", subset="extraction")
             )
     else:
-        # compare extracted memories with gold via the judge (synthetic: direct gold comparison)
-        extracted = backend.list_memories() if backend.supports("list_memories") else []
-        texts = [e.content for e in extracted] if extracted else []
+        # compare extracted memories with gold via the judge. Build the predicted
+        # text from the top-k retrieval of the gold memory (NOT the entire store):
+        # a single gold memory compared against every memory in the store blew up
+        # to ~4M tokens per call and overflowed the context window.
         correct = 0
         total = 0
         for idx, m in enumerate(ds.memories):
             if m.get("Distraction"):
                 continue
             total += 1
-            ok = judge.judge("Extract the memory", m["Content"], " ".join(texts))
+            hits = backend.search(m["Content"], 5)
+            pred = " ".join(h.content for h in hits)
+            ok = judge.judge("Extract the memory", m["Content"], pred)
             if ok is not None and ok:
                 correct += 1
             if (idx + 1) % 25 == 0:
