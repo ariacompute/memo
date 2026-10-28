@@ -19,6 +19,20 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - docs/：compare.md 功能矩阵、bench_results.md 结果说明
 - 根：AGENTS.md / requirements.md / task.md / README.md
 
+## Trust stores (eMudhra/emSign CA key compromise, 2026-10)
+
+- `aria-memo` CLI uses `reqwest` + `rustls-tls` for outbound HTTPS (the self-managed
+  `upgrade --url` release download and any future HTTP fetch). Its trust store is the
+  compiled-in **`webpki-roots`**, pinned `>=1.0.10` in `crates/cli/Cargo.toml` and bumped
+  in `Cargo.lock` (1.0.9 -> 1.0.10) — 1.0.10+ removes the compromised emSign roots. The
+  binary does NOT use the system bundle, so the lock bump is the decisive fix.
+- `benches/` (Python): the harness may make outbound TLS (datasets download, LLM judge
+  API); `benches/requirements.txt` now pins `certifi` so its bundled CA store is a
+  post-emSign-removal release.
+- `benches/chromem-wrapper` (Go, benchmark adapter only, no TLS): `go.mod` bumped
+  1.21 -> 1.27.3 for toolchain consistency.
+- `scripts/check-emudhra.sh`: offline detector scanning the host/system CA bundle.
+
 ## 开发规范
 - 统一 `MemoError`（thiserror），禁止静默失败，禁止 `.unwrap()` 吞错。
 - 新增功能同步写单测，核心逻辑必须覆盖正常 + 异常路径；Bug 修复须含可复现用例。

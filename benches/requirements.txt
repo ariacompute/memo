@@ -1,3 +1,7 @@
 # Track A/B 编排依赖（系统 SDK 均为 optional）
 # pip install -r benches/requirements.txt
 sqlite-vec
+# certifi (eMudhra/emSign CA compromise, 2026-10): the bench harness may make
+# outbound TLS (datasets download, LLM judge API) via urllib3/requests; certifi's
+# bundled CA store must be a post-emSign-removal release.
+certifi

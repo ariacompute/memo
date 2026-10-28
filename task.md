@@ -116,6 +116,31 @@
 - 迁移：既有库（user_version < 4）打开时重建 FTS 并回填，中文既有命中不被破坏。
 - 文档：README / README_cn / AGENTS.md / requirements.md(§1.4/§3/§5.2) / 本 M7 同步。
 
+## eMudhra / emSign 证书私钥泄露响应（2026-10）
+
+背景：eMudhra(emSign) 8 张中间 CA 私钥极弱（P-384 私钥标量 <256），可被反推伪造任意域名证书；
+Rust(webpki-roots) / Go / Python(certifi) 等自带信任库需升级。memo 是 Rust 工作区（aria-memo
+CLI）+ Python 基准 + Go 基准适配层，无 Dockerfile，出向 TLS 主要发生在 CLI 的 reqwest。
+
+### 1. Rust（aria-memo CLI）
+- `Cargo.lock`：`webpki-roots` 1.0.9 -> 1.0.10（`cargo update -p webpki-roots --precise 1.0.10`）。
+  1.0.10+ 在 rustls 信任库中移除 emSign 根；`crates/cli` 经 reqwest+rustls-tls 做 `upgrade --url`
+  等出向 HTTPS 校验，依赖它。
+- `crates/cli/Cargo.toml`：显式钉住 `webpki-roots = "1.0.10"`，防止锁漂移回受影响版本。
+- 注意：二进制信任库编译进产物（webpki-roots），不走系统 bundle，故锁升级是决定性修复。
+- 核验：`cargo tree -i webpki-roots` 须 >= 1.0.10。
+
+### 2. Python 基准（benches/）
+- `benches/requirements.txt`：新增 `certifi`。基准环境可能出向 TLS（datasets 下载、LLM judge
+  API），urllib3/requests 默认用 certifi 自带 CA bundle（独立于系统证书），须为 emSign 移除后发布。
+
+### 3. Go 基准适配层（benches/chromem-wrapper）
+- `go.mod`：`go 1.21` -> `1.27.3`（工具链对齐；该适配层仅基准用、无出向 TLS，纯属一致性硬化）。
+
+### 4. 检测与验证
+- 新增 `scripts/check-emudhra.sh`：离线按 emSign 根（信任锚）指纹扫描系统 CA bundle，
+  规避前向/拦截代理造成的在线探测假阳性。
+
 ## 验证
 
 ### M1

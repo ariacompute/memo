@@ -1,6 +1,6 @@
 module chromem-wrapper
 
-go 1.21
+go 1.27.3
 
 require github.com/philippgille/chromem-go v0.7.0
 
