@@ -122,6 +122,16 @@ pub fn run(
 
 /// Download → extract → install pipeline, driven by an injected HTTP source.
 pub(crate) fn run_with(req: &UpgradeRequest<'_>, http: &dyn HttpGet) -> io::Result<()> {
+    run_with_asset_os(req, http, None)
+}
+
+/// Same pipeline with an optional explicit release-asset platform: `None` uses
+/// the host, while tests pin both the `.tar.gz` and the `.zip` layout on any OS.
+fn run_with_asset_os(
+    req: &UpgradeRequest<'_>,
+    http: &dyn HttpGet,
+    asset_os: Option<&str>,
+) -> io::Result<()> {
     let org = req.org.trim_end_matches('/');
     let host = detect_host(org)?;
     let releases = fetch_releases(http, host, org)?;
@@ -132,7 +142,10 @@ pub(crate) fn run_with(req: &UpgradeRequest<'_>, http: &dyn HttpGet) -> io::Resu
         return Ok(());
     }
 
-    let asset_os = detect_asset_os()?;
+    let asset_os = match asset_os {
+        Some(os) => os,
+        None => detect_asset_os()?,
+    };
     let cli_name = memo_asset_name(&ver, asset_os);
     let cli_asset = find_asset(&target.assets, &cli_name)?;
 
@@ -632,6 +645,16 @@ mod tests {
         writer.finish().unwrap().into_inner()
     }
 
+    /// Build the release archive whose layout matches `asset`'s extension
+    /// (`.zip` on Windows, `.tar.gz` everywhere else — see `memo_asset_name`).
+    fn archive_for(asset: &str, entry: &str, payload: &[u8]) -> Vec<u8> {
+        if asset.ends_with(".zip") {
+            zip_bytes(&[], &[(entry, payload)])
+        } else {
+            tar_gz(&[(entry, payload)])
+        }
+    }
+
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "aria-memo-upgrade-test-{}-{tag}",
@@ -924,7 +947,10 @@ mod tests {
         let org = "https://github.com/ariacompute";
         let ver = "0.9.1";
         let asset = memo_asset_name(ver, detect_asset_os().unwrap());
-        let archive = tar_gz(&[("bin/aria-memo", b"#!/bin/sh\nprintf hi\n")]);
+        let payload: &[u8] = b"#!/bin/sh\nprintf hi\n";
+        // The archive must follow the host asset layout: Windows publishes
+        // `.zip`, every other platform `.tar.gz`.
+        let archive = archive_for(&asset, &format!("bin/{BIN_NAME}"), payload);
         let http = FakeHttp::default()
             .with(
                 &releases_url(org),
@@ -946,7 +972,7 @@ mod tests {
             .unwrap()
             .read_to_end(&mut content)
             .unwrap();
-        assert_eq!(content, b"#!/bin/sh\nprintf hi\n");
+        assert_eq!(content, payload.to_vec());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -955,6 +981,31 @@ mod tests {
         }
         // Staging is cleaned up.
         assert!(!stale.exists());
+    }
+
+    #[test]
+    fn run_with_installs_from_both_archive_layouts_on_any_host() {
+        let org = "https://github.com/ariacompute";
+        let ver = "0.9.1";
+        let payload: &[u8] = b"binary-payload";
+        for asset_os in ["linux_x86_64", "windows_x86_64"] {
+            let fx = Fixture::new(&format!("layout-{asset_os}"));
+            let asset = memo_asset_name(ver, asset_os);
+            let archive = archive_for(&asset, &format!("bin/{BIN_NAME}"), payload);
+            let http = FakeHttp::default()
+                .with(
+                    &releases_url(org),
+                    releases_json(&[("v0.9.1", false, &asset)]),
+                )
+                .with(&download_url_for(&asset), archive);
+            let req = fx.request(None, "0.1.0", org);
+            run_with_asset_os(&req, &http, Some(asset_os)).unwrap();
+            assert_eq!(
+                fs::read(fx.install.join(BIN_NAME)).unwrap(),
+                payload.to_vec(),
+                "asset layout {asset_os}"
+            );
+        }
     }
 
     #[test]
