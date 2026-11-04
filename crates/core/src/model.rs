@@ -36,7 +36,6 @@ impl MemoType {
             },
         }
     }
-
 }
 
 impl std::str::FromStr for MemoType {
@@ -117,9 +116,9 @@ pub struct SearchQuery {
 
 impl SearchQuery {
     /// Construct a query with sensible defaults.
-    pub fn new(text: impl Into<String>) -> Self {
+    pub fn new(text: &str) -> Self {
         Self {
-            text: text.into(),
+            text: text.to_string(),
             top_k: 10,
             semantic_weight: 0.7,
             keyword_weight: 0.5,
@@ -138,10 +137,14 @@ impl SearchQuery {
             return Err(MemoError::InvalidParam("top_k must be > 0".into()));
         }
         if !(0.0..=1.0).contains(&self.semantic_weight) {
-            return Err(MemoError::InvalidParam("semantic_weight out of [0,1]".into()));
+            return Err(MemoError::InvalidParam(
+                "semantic_weight out of [0,1]".into(),
+            ));
         }
         if !(0.0..=1.0).contains(&self.keyword_weight) {
-            return Err(MemoError::InvalidParam("keyword_weight out of [0,1]".into()));
+            return Err(MemoError::InvalidParam(
+                "keyword_weight out of [0,1]".into(),
+            ));
         }
         if self.semantic_weight == 0.0 && self.keyword_weight == 0.0 {
             return Err(MemoError::InvalidParam(
@@ -169,9 +172,9 @@ pub struct RecallQuery {
 
 impl RecallQuery {
     /// Construct a query with sensible defaults.
-    pub fn new(text: impl Into<String>) -> Self {
+    pub fn new(text: &str) -> Self {
         Self {
-            text: text.into(),
+            text: text.to_string(),
             top_k: 10,
             score_threshold: 0.0,
             memo_type: None,
@@ -236,7 +239,9 @@ impl std::str::FromStr for RelationKind {
             "temporal" => Ok(RelationKind::Temporal),
             "causal" => Ok(RelationKind::Causal),
             "entity" => Ok(RelationKind::Entity),
-            _ => Err(MemoError::InvalidParam(format!("unknown relation_kind: {s}"))),
+            _ => Err(MemoError::InvalidParam(format!(
+                "unknown relation_kind: {s}"
+            ))),
         }
     }
 }
@@ -307,7 +312,9 @@ impl GraphRetrieveQuery {
     /// Validate the query: seeds and all bounds must be positive.
     pub fn validate(&self) -> Result<()> {
         if self.seeds.is_empty() {
-            return Err(MemoError::InvalidParam("graph query needs >= 1 seed".into()));
+            return Err(MemoError::InvalidParam(
+                "graph query needs >= 1 seed".into(),
+            ));
         }
         if self.budget == 0 {
             return Err(MemoError::InvalidParam("graph budget must be > 0".into()));
@@ -339,6 +346,10 @@ pub struct GraphRetrieveResult {
     pub trace: RetrieveTrace,
 }
 
+/// Neighbor lookup used by [`graph_bfs`]: returns outgoing edges
+/// `(to_id, score, kind)` for a node.
+pub type NeighborFn<'a> = dyn FnMut(&MemoId) -> Vec<(MemoId, f32, RelationKind)> + 'a;
+
 /// Generic bounded graph traversal (BFS with cycle avoidance) shared by every
 /// backend. `neighbor_fn` returns outgoing edges `(to_id, score, kind)` for a node;
 /// the caller filters by `views`, caps visited nodes at `budget`, and decays the
@@ -349,7 +360,7 @@ pub fn graph_bfs(
     views: &[RelationKind],
     budget: usize,
     max_hops: usize,
-    mut neighbor_fn: impl FnMut(&MemoId) -> Vec<(MemoId, f32, RelationKind)>,
+    neighbor_fn: &mut NeighborFn<'_>,
 ) -> (Vec<(MemoId, f32)>, String) {
     use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -606,6 +617,10 @@ mod tests {
         let mut q = SearchQuery::new("x");
         q.semantic_weight = 2.0;
         assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
+
+        let mut q = SearchQuery::new("x");
+        q.keyword_weight = -0.1;
+        assert!(matches!(q.validate(), Err(MemoError::InvalidParam(_))));
     }
 
     #[test]
@@ -642,20 +657,16 @@ mod tests {
     #[test]
     fn memo_patch_is_empty() {
         assert!(MemoPatch::default().is_empty());
-        assert!(
-            !MemoPatch {
-                content: Some("x".into()),
-                ..Default::default()
-            }
-            .is_empty()
-        );
-        assert!(
-            !MemoPatch {
-                importance: Some(0.5),
-                ..Default::default()
-            }
-            .is_empty()
-        );
+        assert!(!MemoPatch {
+            content: Some("x".into()),
+            ..Default::default()
+        }
+        .is_empty());
+        assert!(!MemoPatch {
+            importance: Some(0.5),
+            ..Default::default()
+        }
+        .is_empty());
     }
 
     #[test]
@@ -666,6 +677,9 @@ mod tests {
         assert_eq!(keyword_score("apple pie", "rust go"), 0.0);
         // Empty content + non-empty query -> 0
         assert_eq!(keyword_score("", "x"), 0.0);
+        // Query with no alphanumeric words falls back to substring matching.
+        assert_eq!(keyword_score("hello world", "!!!"), 0.0);
+        assert_eq!(keyword_score("hello !!! world", "!!!"), 1.0);
     }
 
     #[test]
@@ -712,27 +726,41 @@ mod tests {
     }
 
     #[test]
+    fn graph_bfs_handles_duplicate_seeds_and_zero_weight_edges() {
+        let mut edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = HashMap::new();
+        edges.insert(
+            "a".into(),
+            vec![
+                ("b".into(), 0.9, RelationKind::Semantic),
+                // zero-weight edge: the candidate score never improves on 0.0
+                ("d".into(), 0.0, RelationKind::Semantic),
+            ],
+        );
+        // Duplicate seeds are inserted once.
+        let (out, stop) = graph_bfs(&["a".into(), "a".into()], &[], 10, 3, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
+        assert_eq!(stop, "exhausted");
+        let ids: Vec<&str> = out.iter().map(|(id, _)| id.as_str()).collect();
+        assert_eq!(ids.len(), 3);
+        let b = out.iter().find(|(id, _)| id == "b").unwrap();
+        assert!((b.1 - 0.9 * 0.9).abs() < 1e-6);
+        let d = out.iter().find(|(id, _)| id == "d").unwrap();
+        assert_eq!(d.1, 0.0);
+    }
+
+    #[test]
     fn graph_bfs_respects_max_hops() {
         // a -> b -> c; max_hops=1 must NOT reach c.
         let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
             let mut m = HashMap::new();
-            m.insert(
-                "a".into(),
-                vec![("b".into(), 0.9, RelationKind::Semantic)],
-            );
-            m.insert(
-                "b".into(),
-                vec![("c".into(), 0.9, RelationKind::Semantic)],
-            );
+            m.insert("a".into(), vec![("b".into(), 0.9, RelationKind::Semantic)]);
+            m.insert("b".into(), vec![("c".into(), 0.9, RelationKind::Semantic)]);
             m
         };
-        let (out, _) = graph_bfs(
-            &["a".into()],
-            &[],
-            10,
-            1,
-            |n| edges.get(n).cloned().unwrap_or_default(),
-        );
+        let (out, _) = graph_bfs(&["a".into()], &[], 10, 1, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
         let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
         assert!(ids.contains(&&"a".to_string()));
         assert!(ids.contains(&&"b".to_string()));
@@ -817,24 +845,14 @@ mod relation_tests {
         // a -> b -> c, and c -> a (cycle). Seed at a, hop=2 budget=10.
         let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
             let mut m = HashMap::new();
-            m.insert(
-                "a".into(),
-                vec![("b".into(), 0.9, RelationKind::Semantic)],
-            );
-            m.insert(
-                "b".into(),
-                vec![("c".into(), 0.8, RelationKind::Semantic)],
-            );
+            m.insert("a".into(), vec![("b".into(), 0.9, RelationKind::Semantic)]);
+            m.insert("b".into(), vec![("c".into(), 0.8, RelationKind::Semantic)]);
             m.insert("c".into(), vec![("a".into(), 0.7, RelationKind::Causal)]);
             m
         };
-        let (out, stop) = graph_bfs(
-            &["a".into()],
-            &[],
-            10,
-            2,
-            |n| edges.get(n).cloned().unwrap_or_default(),
-        );
+        let (out, stop) = graph_bfs(&["a".into()], &[], 10, 2, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
         let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
         assert!(ids.contains(&&"a".to_string()));
         assert!(ids.contains(&&"b".to_string()));
@@ -843,6 +861,37 @@ mod relation_tests {
         assert!(stop == "exhausted" || stop == "budget");
         // Seed keeps highest score.
         assert_eq!(out[0].0, "a");
+    }
+
+    #[test]
+    fn graph_bfs_skips_neighbors_already_visited() {
+        // a -> b, b -> a (back edge) and b -> c. With max_hops=3 the node b is
+        // expanded, and its edge back to the already visited seed a is skipped.
+        let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
+            let mut m = HashMap::new();
+            m.insert("a".into(), vec![("b".into(), 0.9, RelationKind::Semantic)]);
+            m.insert(
+                "b".into(),
+                vec![
+                    ("a".into(), 0.9, RelationKind::Semantic),
+                    ("c".into(), 0.8, RelationKind::Semantic),
+                ],
+            );
+            m
+        };
+        let (out, stop) = graph_bfs(&["a".into()], &[], 10, 3, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
+        let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
+        assert_eq!(ids, vec!["a", "b", "c"]);
+        assert_eq!(stop, "exhausted");
+    }
+
+    #[test]
+    fn lexical_relevance_punctuation_only_query_uses_substring() {
+        // No alphanumeric terms -> the raw trimmed query is matched as a substring.
+        assert_eq!(lexical_relevance("hello !!! world", "!!!"), 1.0);
+        assert_eq!(lexical_relevance("hello world", "!!!"), 0.0);
     }
 
     #[test]
@@ -859,25 +908,17 @@ mod relation_tests {
             m
         };
         // Only semantic view -> c (temporal) excluded.
-        let (out, _) = graph_bfs(
-            &["a".into()],
-            &[RelationKind::Semantic],
-            10,
-            3,
-            |n| edges.get(n).cloned().unwrap_or_default(),
-        );
+        let (out, _) = graph_bfs(&["a".into()], &[RelationKind::Semantic], 10, 3, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
         let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
         assert!(ids.contains(&&"b".to_string()));
         assert!(!ids.contains(&&"c".to_string()));
 
         // Budget=2 -> only seed + one neighbor.
-        let (out, stop) = graph_bfs(
-            &["a".into()],
-            &[],
-            2,
-            3,
-            |n| edges.get(n).cloned().unwrap_or_default(),
-        );
+        let (out, stop) = graph_bfs(&["a".into()], &[], 2, 3, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
         assert_eq!(out.len(), 2);
         assert_eq!(stop, "budget");
     }

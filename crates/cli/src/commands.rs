@@ -1,4 +1,4 @@
-use memo::{MemoryController, MemoManager};
+use memo::{MemoManager, MemoryController};
 use memo_core::{
     generate_id, now_secs, Memo, MemoError, MemoPatch, MemoType, RecallQuery, Relation,
     RelationKind, Result, SearchQuery,
@@ -8,11 +8,19 @@ use std::str::FromStr;
 
 /// Add a memory and return its id. An unknown memo_type falls back to `working`
 /// (type schema differences must not break the evaluation pipeline).
-pub fn add(manager: &MemoManager, mem_type: &str, content: &str, importance: f32) -> Result<String> {
+pub fn add(
+    manager: &MemoManager,
+    mem_type: &str,
+    content: &str,
+    importance: f32,
+) -> Result<String> {
     let mt = match <MemoType as std::str::FromStr>::from_str(mem_type) {
         Ok(t) => t,
         Err(_) => {
-            eprintln!("[warn] unknown memo_type '{}', falling back to working", mem_type);
+            eprintln!(
+                "[warn] unknown memo_type '{}', falling back to working",
+                mem_type
+            );
             MemoType::Working
         }
     };
@@ -23,7 +31,7 @@ pub fn add(manager: &MemoManager, mem_type: &str, content: &str, importance: f32
 /// Fetch a memory by id (JSON); returns "not found" if absent.
 pub fn get(manager: &MemoManager, id: &str) -> Result<String> {
     match manager.get(&id.to_string())? {
-        Some(m) => Ok(serde_json::to_string_pretty(&m).unwrap_or_else(|_| "{}".to_string())),
+        Some(m) => Ok(serde_json::to_string_pretty(&m).unwrap_or_default()),
         None => Ok("not found".to_string()),
     }
 }
@@ -46,7 +54,7 @@ pub fn search(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) ->
                 })
             })
             .collect();
-        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_default());
     }
     let lines: Vec<String> = rs
         .iter()
@@ -73,7 +81,7 @@ pub fn recall(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) ->
                 })
             })
             .collect();
-        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_default());
     }
     let lines: Vec<String> = rs
         .iter()
@@ -85,7 +93,9 @@ pub fn recall(manager: &MemoManager, text: &str, top_k: usize, as_json: bool) ->
 /// List memories (optionally filtered by type).
 /// Defaults to `id [type] content` (for backward compatibility); returns a JSON array when `as_json`.
 pub fn list(manager: &MemoManager, mem_type: Option<&str>, as_json: bool) -> Result<String> {
-    let mt = mem_type.map(<MemoType as std::str::FromStr>::from_str).transpose()?;
+    let mt = mem_type
+        .map(<MemoType as std::str::FromStr>::from_str)
+        .transpose()?;
     let ms = manager.list(mt)?;
     if as_json {
         let arr: Vec<serde_json::Value> = ms
@@ -101,7 +111,7 @@ pub fn list(manager: &MemoManager, mem_type: Option<&str>, as_json: bool) -> Res
                 })
             })
             .collect();
-        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_default());
     }
     let lines: Vec<String> = ms
         .iter()
@@ -151,7 +161,7 @@ pub fn search_batch(
     let sqs: Vec<SearchQuery> = queries
         .iter()
         .map(|t| {
-            let mut q = SearchQuery::new(t.clone());
+            let mut q = SearchQuery::new(t.as_str());
             q.top_k = top_k;
             q
         })
@@ -171,14 +181,17 @@ pub fn search_batch(
                 })
             })
             .collect();
-        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_default());
     }
     let lines: Vec<String> = results
         .iter()
         .enumerate()
         .flat_map(|(i, rs)| {
             let mut out = vec![format!("# query {}: {}", i, queries[i])];
-            out.extend(rs.iter().map(|s| format!("{:.3}\t{}", s.score, s.memo.content)));
+            out.extend(
+                rs.iter()
+                    .map(|s| format!("{:.3}\t{}", s.score, s.memo.content)),
+            );
             out
         })
         .collect();
@@ -238,16 +251,14 @@ pub fn bench(manager: &MemoManager, cfg: &BenchConfig) -> Result<String> {
     }
 
     for i in 0..warmup {
-        let _ = manager.add(
-            &format!("warmup memo content {i}"),
-            MemoType::Working,
-            HashMap::new(),
-            0.5,
-        )?;
+        let content = format!("warmup memo content {i}");
+        manager.add(&content, MemoType::Working, HashMap::new(), 0.5)?;
     }
 
     let bench_item = |i: usize, r: usize| -> String {
-        format!("bench item {r}-{i}: user prefers rust systems programming and local-first memo {i}")
+        format!(
+            "bench item {r}-{i}: user prefers rust systems programming and local-first memo {i}"
+        )
     };
 
     let mut report = serde_json::json!({
@@ -263,7 +274,7 @@ pub fn bench(manager: &MemoManager, cfg: &BenchConfig) -> Result<String> {
     // Skipped when `baseline` is false (large corpora would otherwise time out).
     if baseline {
         let mut add_ms: Vec<f64> = Vec::with_capacity(size);
-        reset_corpus(manager);
+        reset_corpus(manager)?;
         for i in 0..size {
             let content = bench_item(i, 0);
             let t0 = std::time::Instant::now();
@@ -277,7 +288,7 @@ pub fn bench(manager: &MemoManager, cfg: &BenchConfig) -> Result<String> {
     if wal {
         manager.store().enable_wal()?;
         let mut wal_ms: Vec<f64> = Vec::with_capacity(size);
-        reset_corpus(manager);
+        reset_corpus(manager)?;
         for i in 0..size {
             let content = bench_item(i, 1);
             let t0 = std::time::Instant::now();
@@ -292,7 +303,7 @@ pub fn bench(manager: &MemoManager, cfg: &BenchConfig) -> Result<String> {
         let reps = reps.unwrap_or(warmup + 1);
         let mut per_add: Vec<f64> = Vec::with_capacity(reps);
         for r in 0..reps {
-            reset_corpus(manager);
+            reset_corpus(manager)?;
             let contents: Vec<String> = (0..size).map(|i| bench_item(i, r)).collect();
             let t0 = std::time::Instant::now();
             manager.add_batch(&contents, MemoType::Working, 0.5)?;
@@ -306,7 +317,7 @@ pub fn bench(manager: &MemoManager, cfg: &BenchConfig) -> Result<String> {
         let reps = reps.unwrap_or(warmup + 1);
         let mut per_add: Vec<f64> = Vec::with_capacity(reps);
         for r in 0..reps {
-            reset_corpus(manager);
+            reset_corpus(manager)?;
             let now = now_secs();
             let mut memos: Vec<Memo> = Vec::with_capacity(size);
             for i in 0..size {
@@ -348,8 +359,8 @@ pub fn bench(manager: &MemoManager, cfg: &BenchConfig) -> Result<String> {
         "programming",
     ];
     let t0 = std::time::Instant::now();
-    for qtext in queries.iter() {
-        let mut q = SearchQuery::new(*qtext);
+    for qtext in queries {
+        let mut q = SearchQuery::new(qtext);
         q.top_k = top_k;
         let _ = manager.search(q)?;
     }
@@ -396,12 +407,11 @@ fn add_segment(xs: &mut [f64]) -> serde_json::Value {
 }
 
 /// Clear all stored memories so each benchmark segment starts from an empty corpus.
-fn reset_corpus(manager: &MemoManager) {
-    if let Ok(all) = manager.list(None) {
-        for m in all {
-            let _ = manager.forget(&m.id);
-        }
+fn reset_corpus(manager: &MemoManager) -> Result<()> {
+    for m in manager.list(None)? {
+        manager.forget(&m.id)?;
     }
+    Ok(())
 }
 
 fn percentile(xs: &mut [f64], p: f64) -> f64 {
@@ -467,7 +477,10 @@ pub fn relate(
     manager.store().add_relation(&rel)?;
     Ok(format!(
         "relation {}->{}:{} added (score {:.3})",
-        from, to, k.as_str(), score
+        from,
+        to,
+        k.as_str(),
+        score
     ))
 }
 
@@ -484,12 +497,11 @@ pub fn relations(
         Some(s) => Some(<RelationKind as FromStr>::from_str(s)?),
         None => None,
     };
-    let rels = manager.store().get_relations(
-        from.map(|s| s.to_string()).as_ref(),
-        to.map(|s| s.to_string()).as_ref(),
-        k,
-        top_k,
-    )?;
+    let from_id = from.map(str::to_string);
+    let to_id = to.map(str::to_string);
+    let rels = manager
+        .store()
+        .get_relations(from_id.as_ref(), to_id.as_ref(), k, top_k)?;
     if as_json {
         let arr: Vec<serde_json::Value> = rels
             .iter()
@@ -504,14 +516,18 @@ pub fn relations(
                 })
             })
             .collect();
-        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_else(|_| "[]".to_string()));
+        return Ok(serde_json::to_string_pretty(&arr).unwrap_or_default());
     }
     let lines: Vec<String> = rels
         .iter()
         .map(|r| {
             format!(
                 "{}->{}:{} {:.3} [{}]",
-                r.from_id, r.to_id, r.kind.as_str(), r.score, r.provenance
+                r.from_id,
+                r.to_id,
+                r.kind.as_str(),
+                r.score,
+                r.provenance
             )
         })
         .collect();
@@ -552,7 +568,7 @@ pub fn graph_retrieve(
             "hits": res.trace.hits,
         });
         let out = serde_json::json!({ "items": items, "trace": trace });
-        return Ok(serde_json::to_string_pretty(&out).unwrap_or_else(|_| "{}".to_string()));
+        return Ok(serde_json::to_string_pretty(&out).unwrap_or_default());
     }
     let lines: Vec<String> = res
         .items
@@ -590,12 +606,19 @@ mod tests {
     #[test]
     fn cli_recall_returns_semantic_match() {
         let m = mgr();
-        let rust_id = add(&m, "working", "user prefers rust for systems programming", 0.8).unwrap();
+        let rust_id = add(
+            &m,
+            "working",
+            "user prefers rust for systems programming",
+            0.8,
+        )
+        .unwrap();
         add(&m, "working", "banana smoothie recipe with ice", 0.5).unwrap();
         let out = recall(&m, "rust programming language", 5, false).unwrap();
         assert!(out.contains("rust"));
         let arr: serde_json::Value =
-            serde_json::from_str(&recall(&m, "rust programming language", 5, true).unwrap()).unwrap();
+            serde_json::from_str(&recall(&m, "rust programming language", 5, true).unwrap())
+                .unwrap();
         assert_eq!(arr[0]["id"], rust_id);
     }
 
@@ -779,7 +802,13 @@ mod tests {
     fn cli_connect_infers_edges() {
         let m = mgr();
         let _a = add(&m, "working", "user prefers rust systems programming", 0.8).unwrap();
-        let b = add(&m, "working", "rust is used for systems programming by the user", 0.8).unwrap();
+        let b = add(
+            &m,
+            "working",
+            "rust is used for systems programming by the user",
+            0.8,
+        )
+        .unwrap();
         // connect on b should infer edges to a (semantic/entity).
         let out = connect(&m, &b).unwrap();
         assert!(out.contains("edge"));
@@ -803,13 +832,7 @@ mod tests {
         add(&m, "working", "rust systems programming", 0.8).unwrap();
         add(&m, "working", "banana smoothie recipe", 0.5).unwrap();
         // Non-JSON form emits one header block per query.
-        let out = search_batch(
-            &m,
-            &["rust".to_string(), "banana".to_string()],
-            5,
-            false,
-        )
-        .unwrap();
+        let out = search_batch(&m, &["rust".to_string(), "banana".to_string()], 5, false).unwrap();
         assert!(out.contains("# query 0:"));
         assert!(out.contains("# query 1:"));
         // JSON form returns a per-query array.
@@ -852,10 +875,50 @@ mod tests {
     }
 
     #[test]
+    fn cli_bench_batch_and_no_baseline_segments() {
+        let m = mgr();
+        let cfg = BenchConfig {
+            size: 3,
+            top_k: 2,
+            warmup: 2,
+            search_batch: true,
+            wal: false,
+            batch_embed: false,
+            bulk: false,
+            baseline: false,
+            reps: Some(1),
+        };
+        let out = bench(&m, &cfg).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+        // Baseline is opt-out; the batch-retrieval segment is reported.
+        assert!(v.get("add_baseline").is_none());
+        assert!(v["batch"]["ops_per_sec"].as_f64().unwrap() > 0.0);
+        assert!(v["search"]["p50_ms"].as_f64().unwrap() >= 0.0);
+    }
+
+    #[test]
+    fn cli_bench_segment_helpers_accept_empty_slices() {
+        // Empty latency vectors must yield zeros instead of panicking.
+        assert_eq!(
+            add_segment(&mut []),
+            serde_json::json!({ "p50_ms": 0.0, "p99_ms": 0.0, "ops_per_sec": 0.0 })
+        );
+        assert_eq!(percentile(&mut [], 0.5), 0.0);
+        let mut xs = [1.0, 2.0, 3.0];
+        assert!(percentile(&mut xs, 1.0) >= 1.0);
+    }
+
+    #[test]
     fn cli_graph_retrieve_view_filter() {
         let m = mgr();
         let _a = add(&m, "working", "user likes rust systems programming", 0.8).unwrap();
-        let b = add(&m, "working", "rust is used for systems programming by the user", 0.8).unwrap();
+        let b = add(
+            &m,
+            "working",
+            "rust is used for systems programming by the user",
+            0.8,
+        )
+        .unwrap();
         connect(&m, &b).unwrap();
         // Restrict to the semantic view: a must still be reachable from b.
         let g = graph_retrieve(&m, "rust programming", "semantic", 20, 3, 10, true).unwrap();

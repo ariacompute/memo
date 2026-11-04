@@ -69,18 +69,54 @@ mod tests {
             MemoError::DuplicateId("x2".into()).to_string(),
             "duplicate memo id: x2"
         );
-        assert!(MemoError::Db("boom".into())
-            .to_string()
-            .contains("boom"));
+        assert!(MemoError::Db("boom".into()).to_string().contains("boom"));
     }
 
     #[test]
     fn io_from_conversion() {
         let e: MemoError = std::io::Error::other("disk").into();
-        match e {
-            MemoError::Io(_) => {}
-            other => panic!("expected Io, got {other:?}"),
+        assert!(matches!(e, MemoError::Io(_)));
+    }
+
+    #[test]
+    fn clone_preserves_every_variant() {
+        let variants = vec![
+            MemoError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "slow")),
+            MemoError::Db("db".into()),
+            MemoError::NotFound("nf".into()),
+            MemoError::DuplicateId("dup".into()),
+            MemoError::EmptyContent,
+            MemoError::EmptyEmbedding,
+            MemoError::InvalidParam("bad".into()),
+            MemoError::Serialization("ser".into()),
+            MemoError::Embedding("emb".into()),
+            MemoError::Other("other".into()),
+        ];
+        for e in variants {
+            let cloned = e.clone();
+            // Same variant and same Display text, and the io kind survives the clone.
+            assert_eq!(cloned.to_string(), e.to_string());
+            if let (MemoError::Io(a), MemoError::Io(b)) = (&e, &cloned) {
+                assert_eq!(a.kind(), b.kind());
+            }
         }
+    }
+
+    #[test]
+    fn display_covers_every_variant() {
+        assert_eq!(MemoError::EmptyEmbedding.to_string(), "empty embedding");
+        assert!(MemoError::Serialization("s".into())
+            .to_string()
+            .contains("serialization error: s"));
+        assert!(MemoError::Embedding("e".into())
+            .to_string()
+            .contains("embedding error: e"));
+        assert!(MemoError::Other("o".into())
+            .to_string()
+            .contains("other error: o"));
+        assert!(MemoError::Io(std::io::Error::other("disk"))
+            .to_string()
+            .contains("io error: disk"));
     }
 
     #[test]

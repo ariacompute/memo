@@ -3,13 +3,13 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::path::Path;
 use std::sync::Mutex;
 
-use std::sync::OnceLock;
 use jieba_rs::{Jieba, TokenizeMode};
 use lindera::mode::Mode;
 use lindera::segmenter::Segmenter;
 use lindera_dictionary::loader::DictionaryLoader;
 use lindera_ipadic::embedded::EmbeddedIPADICLoader;
 use lindera_ko_dic::embedded::EmbeddedKoDicLoader;
+use std::sync::OnceLock;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS memories (
@@ -61,13 +61,17 @@ pub struct SqliteStore {
 }
 
 fn db_err(e: rusqlite::Error) -> MemoError {
-    // Recover a MemoError wrapped inside row mapping (e.g. corrupted BLOB / metadata parse failure).
-    if let rusqlite::Error::FromSqlConversionFailure(_, _, inner) = &e {
-        if let Some(me) = inner.downcast_ref::<MemoError>() {
-            return me.clone();
+    // Recover a MemoError wrapped inside row mapping (e.g. corrupted BLOB / metadata
+    // parse failure); other conversion errors (e.g. invalid UTF-8) stay generic.
+    match &e {
+        rusqlite::Error::FromSqlConversionFailure(_, _, inner) => {
+            match inner.downcast_ref::<MemoError>() {
+                Some(me) => me.clone(),
+                None => MemoError::Db(e.to_string()),
+            }
         }
+        _ => MemoError::Db(e.to_string()),
     }
-    MemoError::Db(e.to_string())
 }
 
 fn serialize_embedding(emb: Option<&[f32]>) -> Result<Vec<u8>> {
@@ -93,7 +97,9 @@ fn deserialize_embedding(buf: &[u8]) -> Result<Option<Vec<f32>>> {
     }
     let n = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]) as usize;
     if buf.len() != 4 + n * 4 {
-        return Err(MemoError::Serialization("embedding blob length mismatch".into()));
+        return Err(MemoError::Serialization(
+            "embedding blob length mismatch".into(),
+        ));
     }
     let mut v = Vec::with_capacity(n);
     for i in 0..n {
@@ -117,21 +123,16 @@ fn row_to_memo(row: &Row) -> rusqlite::Result<Memo> {
     let embedding = deserialize_embedding(&emb_blob).map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Blob, Box::new(e))
     })?;
-    let metadata: std::collections::HashMap<String, String> = serde_json::from_str(&meta).map_err(
-        |e| {
+    let metadata: std::collections::HashMap<String, String> =
+        serde_json::from_str(&meta).map_err(|e| {
             rusqlite::Error::FromSqlConversionFailure(
                 4,
                 rusqlite::types::Type::Text,
                 Box::new(MemoError::Serialization(e.to_string())),
             )
-        },
-    )?;
+        })?;
     let memo_type = <MemoType as std::str::FromStr>::from_str(&mt).map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(
-            1,
-            rusqlite::types::Type::Text,
-            Box::new(e),
-        )
+        rusqlite::Error::FromSqlConversionFailure(1, rusqlite::types::Type::Text, Box::new(e))
     })?;
     Ok(Memo {
         id,
@@ -181,6 +182,24 @@ fn cosine(a: &[f32], b: &[f32]) -> Option<f32> {
     Some(dot / (na * nb))
 }
 
+/// Create the parent directory of a database file when it has one (relative
+/// names such as `memo.db` and `:memory:` have no parent directory to create).
+/// Map a JSON serialization failure to `MemoError::Serialization` (used where a
+/// failure is only possible for non-serializable metadata values).
+fn ser_err(e: serde_json::Error) -> MemoError {
+    MemoError::Serialization(e.to_string())
+}
+
+fn ensure_parent(location: &str) -> Result<()> {
+    let parent = Path::new(location)
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty());
+    if let Some(parent) = parent {
+        std::fs::create_dir_all(parent).map_err(MemoError::Io)?;
+    }
+    Ok(())
+}
+
 impl SqliteStore {
     /// Open (or create) the database and migrate it. `:memory:` means an in-memory DB;
     /// a file path's parent directory is created automatically.
@@ -188,11 +207,7 @@ impl SqliteStore {
         let conn = if location == ":memory:" {
             Connection::open_in_memory().map_err(db_err)?
         } else {
-            if let Some(parent) = Path::new(location).parent() {
-                if !parent.as_os_str().is_empty() {
-                    std::fs::create_dir_all(parent).map_err(MemoError::Io)?;
-                }
-            }
+            ensure_parent(location)?;
             Connection::open(location).map_err(db_err)?
         };
         let store = Self {
@@ -228,7 +243,9 @@ impl SqliteStore {
                 .prepare("SELECT id, content FROM memories WHERE deleted=0")
                 .map_err(db_err)?;
             let it = stmt
-                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
                 .map_err(db_err)?;
             for r in it {
                 rows.push(r.map_err(db_err)?);
@@ -272,8 +289,7 @@ impl SqliteStore {
 
     fn insert(&self, conn: &Connection, m: &Memo) -> Result<()> {
         let emb = serialize_embedding(m.embedding.as_deref())?;
-        let meta =
-            serde_json::to_string(&m.metadata).map_err(|e| MemoError::Serialization(e.to_string()))?;
+        let meta = serde_json::to_string(&m.metadata).map_err(ser_err)?;
         conn.execute(
             "INSERT INTO memories (id, memo_type, content, embedding, metadata, importance, version, created_at, updated_at, deleted) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 0)",
@@ -314,11 +330,9 @@ impl MemoStore for SqliteStore {
         m.validate()?;
         let conn = self.conn.lock().expect("sqlite lock poisoned");
         let exists: bool = conn
-            .query_row(
-                "SELECT 1 FROM memories WHERE id=?1",
-                [m.id.clone()],
-                |_| Ok(true),
-            )
+            .query_row("SELECT 1 FROM memories WHERE id=?1", [m.id.clone()], |_| {
+                Ok(true)
+            })
             .optional()
             .map_err(db_err)?
             .is_some();
@@ -357,8 +371,7 @@ impl MemoStore for SqliteStore {
             return Err(MemoError::NotFound(m.id.clone()));
         }
         let emb = serialize_embedding(m.embedding.as_deref())?;
-        let meta =
-            serde_json::to_string(&m.metadata).map_err(|e| MemoError::Serialization(e.to_string()))?;
+        let meta = serde_json::to_string(&m.metadata).map_err(ser_err)?;
         conn.execute(
             "UPDATE memories SET memo_type=?2, content=?3, embedding=?4, metadata=?5, importance=?6, version=?7, updated_at=?8 WHERE id=?1",
             params![
@@ -444,11 +457,9 @@ impl MemoStore for SqliteStore {
         for m in memories {
             m.validate()?;
             let exists: bool = tx
-                .query_row(
-                    "SELECT 1 FROM memories WHERE id=?1",
-                    [m.id.clone()],
-                    |_| Ok(true),
-                )
+                .query_row("SELECT 1 FROM memories WHERE id=?1", [m.id.clone()], |_| {
+                    Ok(true)
+                })
                 .optional()
                 .map_err(db_err)?
                 .is_some();
@@ -600,7 +611,7 @@ impl MemoStore for SqliteStore {
             &query.views,
             query.budget,
             query.max_hops,
-            |n| edges.get(n).cloned().unwrap_or_default(),
+            &mut |n| edges.get(n).cloned().unwrap_or_default(),
         );
 
         let mut items = Vec::new();
@@ -632,24 +643,12 @@ fn search_inner(conn: &Connection, q: &SearchQuery) -> Result<Vec<ScoredMemo>> {
     // 1) Lexical candidate pushdown via FTS5: use BM25 to pick the top lexical
     // candidates (cheap, server-side). The keyword score is still computed by
     // `lexical_relevance` below, preserving its phrase/2-gram semantics.
-    let mut candidate_ids: Vec<String> = Vec::new();
     let use_lexical = q.keyword_weight > 0.0 && !q.text.trim().is_empty();
-    if use_lexical {
-        let match_expr = fts5_match_expr(&q.text);
-        let limit = ((q.top_k * 5) as i64).max(50);
-        let sql = "SELECT mem_id FROM memories_fts \
-                   WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts) LIMIT ?";
-        if let Ok(mut stmt) = conn.prepare(sql) {
-            if let Ok(rows) = stmt.query_map(params![match_expr, limit], |row| {
-                let mem_id: String = row.get(0)?;
-                Ok(mem_id)
-            }) {
-                for id in rows.flatten() {
-                    candidate_ids.push(id);
-                }
-            }
-        }
-    }
+    let candidate_ids: Vec<String> = if use_lexical {
+        fts5_candidate_ids(conn, q)
+    } else {
+        Vec::new()
+    };
 
     // 2) Fetch candidates (pruned by FTS5 when available, else full scan).
     let mut sql = String::from(
@@ -671,13 +670,15 @@ fn search_inner(conn: &Connection, q: &SearchQuery) -> Result<Vec<ScoredMemo>> {
         let rows = stmt
             .query_map(rusqlite::params_from_iter(binds.iter()), row_to_memo)
             .map_err(db_err)?;
-        rows.map(|r| r.map_err(db_err)).collect::<Result<Vec<_>>>()?
+        rows.map(|r| r.map_err(db_err))
+            .collect::<Result<Vec<_>>>()?
     } else {
         let mut stmt = conn.prepare(&sql).map_err(db_err)?;
         let rows = stmt
             .query_map(rusqlite::params_from_iter(binds.iter()), row_to_memo)
             .map_err(db_err)?;
-        rows.map(|r| r.map_err(db_err)).collect::<Result<Vec<_>>>()?
+        rows.map(|r| r.map_err(db_err))
+            .collect::<Result<Vec<_>>>()?
     };
 
     // 3) Score only the (pruned) candidate set: cosine semantic + normalized BM25 lexical.
@@ -698,6 +699,27 @@ fn search_inner(conn: &Connection, q: &SearchQuery) -> Result<Vec<ScoredMemo>> {
     scored.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
     scored.truncate(q.top_k);
     Ok(scored)
+}
+
+/// Best-effort FTS5 lexical candidate ids (ordered by BM25).
+///
+/// The FTS5 table is a retrieval optimization, not a source of truth: a missing
+/// or unreadable index must degrade to the full-scan path in [`search_inner`]
+/// rather than failing the search, so prepare/step errors yield an empty list.
+fn fts5_candidate_ids(conn: &Connection, q: &SearchQuery) -> Vec<String> {
+    let match_expr = fts5_match_expr(&q.text);
+    let limit = ((q.top_k * 5) as i64).max(50);
+    let sql = "SELECT mem_id FROM memories_fts \
+               WHERE memories_fts MATCH ? ORDER BY bm25(memories_fts) LIMIT ?";
+    conn.prepare(sql)
+        .and_then(|mut stmt| {
+            stmt.query_map(params![match_expr, limit], |row| {
+                let mem_id: String = row.get(0)?;
+                Ok(mem_id)
+            })
+            .map(|rows| rows.flatten().collect::<Vec<String>>())
+        })
+        .unwrap_or_default()
 }
 
 /// Pre-segment `text` into space-joined tokens for the FTS5 index.
@@ -778,10 +800,10 @@ fn segment(text: &str) -> Vec<String> {
 /// Run `lindera` segmentation and collect surface strings (errors fall back to
 /// an empty list so a bad dictionary can never break indexing/querying).
 fn lindera_tokens(seg: &Segmenter, text: &str) -> Vec<String> {
-    match seg.new_worker().segment(text) {
-        Ok(tokens) => tokens.into_iter().map(|t| t.surface.to_string()).collect(),
-        Err(_) => Vec::new(),
-    }
+    seg.new_worker()
+        .segment(text)
+        .map(|tokens| tokens.iter().map(|t| t.surface.to_string()).collect())
+        .unwrap_or_default()
 }
 
 /// Script-range predicates used by `segment`.
@@ -810,7 +832,9 @@ fn jieba() -> &'static Jieba {
 fn ja_segmenter() -> &'static Segmenter {
     static INSTANCE: OnceLock<Segmenter> = OnceLock::new();
     INSTANCE.get_or_init(|| {
-        let dict = EmbeddedIPADICLoader::new().load().expect("load embedded ipadic dictionary");
+        let dict = EmbeddedIPADICLoader::new()
+            .load()
+            .expect("load embedded ipadic dictionary");
         Segmenter::new(Mode::Normal, dict, None)
     })
 }
@@ -819,7 +843,9 @@ fn ja_segmenter() -> &'static Segmenter {
 fn ko_segmenter() -> &'static Segmenter {
     static INSTANCE: OnceLock<Segmenter> = OnceLock::new();
     INSTANCE.get_or_init(|| {
-        let dict = EmbeddedKoDicLoader::new().load().expect("load embedded ko-dic dictionary");
+        let dict = EmbeddedKoDicLoader::new()
+            .load()
+            .expect("load embedded ko-dic dictionary");
         Segmenter::new(Mode::Normal, dict, None)
     })
 }
@@ -882,8 +908,18 @@ mod tests {
     #[test]
     fn list_and_search() {
         let s = SqliteStore::open(":memory:").unwrap();
-        s.add(&mem("a", "user likes rust programming", Some(vec![0.9, 0.1, 0.0]))).unwrap();
-        s.add(&mem("b", "banana smoothie recipe", Some(vec![0.0, 0.9, 0.1]))).unwrap();
+        s.add(&mem(
+            "a",
+            "user likes rust programming",
+            Some(vec![0.9, 0.1, 0.0]),
+        ))
+        .unwrap();
+        s.add(&mem(
+            "b",
+            "banana smoothie recipe",
+            Some(vec![0.0, 0.9, 0.1]),
+        ))
+        .unwrap();
         assert_eq!(s.list(None).unwrap().len(), 2);
         // keyword search
         let q = SearchQuery::new("rust");
@@ -909,7 +945,10 @@ mod tests {
         q.semantic_weight = 0.0;
         q.keyword_weight = 1.0;
         let r = s.search(&q).unwrap();
-        assert!(!r.is_empty(), "chinese sub-word should match via jieba segmentation");
+        assert!(
+            !r.is_empty(),
+            "chinese sub-word should match via jieba segmentation"
+        );
         assert_eq!(r[0].memo.id, "a");
         // The same for the other doc (uses a different word).
         let mut qb = SearchQuery::new("橘子");
@@ -1014,13 +1053,22 @@ mod tests {
     fn multilingual_segment_routing() {
         // Japanese text routes to lindera (ipadic) and keeps リンゴ as a token.
         let ja: Vec<String> = segment("私はリンゴが好きです");
-        assert!(ja.contains(&"リンゴ".to_string()), "ja should route to lindera, got {ja:?}");
+        assert!(
+            ja.contains(&"リンゴ".to_string()),
+            "ja should route to lindera, got {ja:?}"
+        );
         // Korean text routes to lindera (ko-dic) and keeps 사과 as a token.
         let ko: Vec<String> = segment("나는 사과를 좋아합니다");
-        assert!(ko.contains(&"사과".to_string()), "ko should route to lindera, got {ko:?}");
+        assert!(
+            ko.contains(&"사과".to_string()),
+            "ko should route to lindera, got {ko:?}"
+        );
         // Chinese text routes to jieba-rs and keeps 苹果 as a token.
         let zh: Vec<String> = segment("用户喜欢用苹果手机拍照");
-        assert!(zh.contains(&"苹果".to_string()), "zh should route to jieba, got {zh:?}");
+        assert!(
+            zh.contains(&"苹果".to_string()),
+            "zh should route to jieba, got {zh:?}"
+        );
         // Latin text uses whitespace tokenization.
         let en: Vec<String> = segment("rust systems programming 香蕉");
         assert!(en.contains(&"rust".to_string()));
@@ -1071,7 +1119,10 @@ mod tests {
     #[test]
     fn embedding_serialize_roundtrip() {
         let buf = serialize_embedding(Some(&[0.1, 0.2, 0.3])).unwrap();
-        assert_eq!(deserialize_embedding(&buf).unwrap(), Some(vec![0.1, 0.2, 0.3]));
+        assert_eq!(
+            deserialize_embedding(&buf).unwrap(),
+            Some(vec![0.1, 0.2, 0.3])
+        );
         assert_eq!(deserialize_embedding(&[]).unwrap(), None);
     }
 
@@ -1245,7 +1296,12 @@ mod tests {
         // Delete by from.
         let removed = s.delete_relations(Some(&"a".into()), None, None).unwrap();
         assert_eq!(removed, 1);
-        assert_eq!(s.get_relations(Some(&"a".into()), None, None, 10).unwrap().len(), 0);
+        assert_eq!(
+            s.get_relations(Some(&"a".into()), None, None, 10)
+                .unwrap()
+                .len(),
+            0
+        );
         // empty filter rejected
         assert!(matches!(
             s.delete_relations(None, None, None),
@@ -1336,5 +1392,297 @@ mod tests {
             "kana must route to lindera ja, got {toks:?}"
         );
         assert!(toks.contains(&"and".to_string()));
+    }
+
+    #[test]
+    fn db_err_keeps_plain_sqlite_errors() {
+        assert!(matches!(
+            db_err(rusqlite::Error::InvalidQuery),
+            MemoError::Db(_)
+        ));
+        // Relative names carry no parent directory, so nothing is created.
+        ensure_parent("memo.db").unwrap();
+        ensure_parent(":memory:").unwrap();
+    }
+
+    #[test]
+    fn corrupt_memo_type_errors_on_read() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO memories (id, memo_type, content, embedding, metadata, importance, version, created_at, updated_at, deleted) \
+                 VALUES ('x','bogus','c',X'', '{}',0.5,1,0,0,0)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            s.get(&"x".into()),
+            Err(MemoError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
+    fn non_utf8_column_maps_to_db_error() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        // A TEXT value holding invalid UTF-8: SQLite cannot decode it, so the row
+        // conversion fails with a non-MemoError payload and `db_err` must fall
+        // through to MemoError::Db.
+        s.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO memories (id, memo_type, content, embedding, metadata, importance, version, created_at, updated_at, deleted) \
+                 VALUES ('x','working',CAST(X'FF' AS TEXT),X'', '{}',0.5,1,0,0,0)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(s.get(&"x".into()), Err(MemoError::Db(_))));
+    }
+
+    #[test]
+    fn delete_relations_by_to_and_kind_filters() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        for id in ["a", "b", "c"] {
+            s.add(&mem(id, "x", None)).unwrap();
+        }
+        s.add_relation(&rel("a", "b", RelationKind::Semantic, 0.9, 1))
+            .unwrap();
+        s.add_relation(&rel("a", "c", RelationKind::Causal, 0.8, 2))
+            .unwrap();
+        // Filter by `to` only.
+        assert_eq!(
+            s.delete_relations(None, Some(&"b".into()), None).unwrap(),
+            1
+        );
+        // Filter by `kind` only.
+        assert_eq!(
+            s.delete_relations(None, None, Some(RelationKind::Causal))
+                .unwrap(),
+            1
+        );
+        assert!(s.get_relations(None, None, None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn corrupt_relation_kind_errors_on_read_and_expand() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "x", None)).unwrap();
+        s.add(&mem("b", "y", None)).unwrap();
+        s.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO relations (from_id, to_id, kind, score, provenance, created_at) \
+                 VALUES ('a','b','bogus',0.5,'local',1)",
+                [],
+            )
+            .unwrap();
+        assert!(matches!(
+            s.get_relations(None, None, None, 10),
+            Err(MemoError::InvalidParam(_))
+        ));
+        let q = GraphRetrieveQuery {
+            seeds: vec!["a".into()],
+            views: vec![],
+            budget: 10,
+            max_hops: 3,
+            top_k: 10,
+        };
+        assert!(matches!(s.expand(&q), Err(MemoError::InvalidParam(_))));
+    }
+
+    #[test]
+    fn expand_skips_relations_to_missing_memories() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "x", None)).unwrap();
+        // A relation pointing at a deleted/nonexistent row (only reachable via raw
+        // SQL, since `add_relation` validates both endpoints).
+        s.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO relations (from_id, to_id, kind, score, provenance, created_at) \
+                 VALUES ('a','ghost','semantic',0.9,'local',1)",
+                [],
+            )
+            .unwrap();
+        let q = GraphRetrieveQuery {
+            seeds: vec!["a".into()],
+            views: vec![],
+            budget: 10,
+            max_hops: 3,
+            top_k: 10,
+        };
+        let res = s.expand(&q).unwrap();
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].memo.id, "a");
+        assert_eq!(res.trace.hits, 1);
+    }
+
+    #[test]
+    fn fts_helpers_fall_back_to_raw_text_without_index_terms() {
+        // Punctuation-only text segments to nothing -> raw trimmed text is used.
+        assert_eq!(fts5_index_text("   !!!  "), "!!!");
+        assert_eq!(fts5_match_expr("  !!! "), "\"!!!\"");
+        // Normal text is segment-joined / OR-joined.
+        assert_eq!(fts5_index_text("rust systems"), "rust systems");
+        assert_eq!(fts5_match_expr("rust systems"), "\"rust\" OR \"systems\"");
+    }
+
+    #[test]
+    fn fts5_candidates_degrade_to_empty_without_index() {
+        let conn = Connection::open_in_memory().unwrap();
+        // No `memories_fts` table: the pruning helper must fail soft (full-scan fallback).
+        assert!(fts5_candidate_ids(&conn, &SearchQuery::new("rust")).is_empty());
+    }
+
+    #[test]
+    fn ser_err_maps_json_failures_to_serialization_errors() {
+        let e = serde_json::from_str::<i32>("not-json").unwrap_err();
+        assert!(matches!(ser_err(e), MemoError::Serialization(_)));
+    }
+
+    #[test]
+    fn nested_db_path_creates_parent_directories() {
+        let root = std::env::temp_dir().join(format!("mem_nested_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("a").join("b").join("memo.db");
+        {
+            let s = SqliteStore::open(path.to_str().unwrap()).unwrap();
+            s.add(&mem("a", "x", None)).unwrap();
+            assert_eq!(s.list(None).unwrap().len(), 1);
+        }
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn old_db_rebuilds_fts_and_incremental_reopen_backfills() {
+        let root = std::env::temp_dir().join(format!("mem_mig_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let path = root.join("nested").join("memo.db");
+        let p = path.to_str().unwrap().to_string();
+
+        // 1) Fresh DB (user_version 0) -> rebuild path, no rows to backfill yet.
+        {
+            let s = SqliteStore::open(&p).unwrap();
+            s.add(&mem("a", "用户喜欢苹果", Some(vec![0.1, 0.2])))
+                .unwrap();
+            // StorageBackend::migrate forwards to the inherent migrate.
+            StorageBackend::migrate(&s).unwrap();
+        }
+        // 2) Simulate a pre-v4 database: drop the FTS table and roll the version back.
+        {
+            let conn = Connection::open(&p).unwrap();
+            conn.execute_batch("DROP TABLE memories_fts; PRAGMA user_version=3;")
+                .unwrap();
+        }
+        // 3) Reopen -> DROP + rebuild + re-index every live memory.
+        {
+            let s = SqliteStore::open(&p).unwrap();
+            let mut q = SearchQuery::new("苹果");
+            q.semantic_weight = 0.0;
+            q.keyword_weight = 1.0;
+            assert_eq!(s.search(&q).unwrap()[0].memo.id, "a");
+            // 4) Remove the index entry so the next open has to backfill it.
+            s.conn
+                .lock()
+                .unwrap()
+                .execute_batch("DELETE FROM memories_fts;")
+                .unwrap();
+        }
+        let count = |s: &SqliteStore| -> i64 {
+            s.conn
+                .lock()
+                .unwrap()
+                .query_row("SELECT count(*) FROM memories_fts", [], |r| r.get(0))
+                .unwrap()
+        };
+        // 5) Incremental reopen: the missing memory is inserted into FTS.
+        {
+            let s = SqliteStore::open(&p).unwrap();
+            assert_eq!(count(&s), 1);
+        }
+        // 6) Already indexed -> skipped (no duplicate rows).
+        {
+            let s = SqliteStore::open(&p).unwrap();
+            assert_eq!(count(&s), 1);
+        }
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn list_filters_by_memo_type() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        let mut working = mem("a", "x", None);
+        working.memo_type = MemoType::Working;
+        let mut semantic = mem("b", "y", None);
+        semantic.memo_type = MemoType::LongTerm {
+            kind: LongTermKind::Semantic,
+        };
+        s.add(&working).unwrap();
+        s.add(&semantic).unwrap();
+        assert_eq!(s.list(None).unwrap().len(), 2);
+        let only = s.list(Some(MemoType::Working)).unwrap();
+        assert_eq!(only.len(), 1);
+        assert_eq!(only[0].id, "a");
+    }
+
+    #[test]
+    fn storage_backend_enable_wal_forwards_to_inherent_method() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("mem_wal_trait_{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let s = SqliteStore::open(path.to_str().unwrap()).unwrap();
+            <SqliteStore as MemoStore>::enable_wal(&s).unwrap();
+            let mode: String = s
+                .conn
+                .lock()
+                .unwrap()
+                .query_row("PRAGMA journal_mode", [], |r| r.get(0))
+                .unwrap();
+            assert_eq!(mode.to_lowercase(), "wal");
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ =
+            std::fs::remove_file(dir.join(format!("mem_wal_trait_{}.db-wal", std::process::id())));
+        let _ =
+            std::fs::remove_file(dir.join(format!("mem_wal_trait_{}.db-shm", std::process::id())));
+    }
+
+    #[test]
+    fn get_relations_filters_by_to_and_kind() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        for id in ["a", "b", "c"] {
+            s.add(&mem(id, "x", None)).unwrap();
+        }
+        s.add_relation(&rel("a", "b", RelationKind::Semantic, 0.5, 1))
+            .unwrap();
+        s.add_relation(&rel("a", "c", RelationKind::Causal, 0.5, 2))
+            .unwrap();
+        let by_to = s.get_relations(None, Some(&"b".into()), None, 10).unwrap();
+        assert_eq!(by_to.len(), 1);
+        assert_eq!(by_to[0].to_id, "b");
+        let by_kind = s
+            .get_relations(None, None, Some(RelationKind::Causal), 10)
+            .unwrap();
+        assert_eq!(by_kind.len(), 1);
+        assert_eq!(by_kind[0].to_id, "c");
+    }
+
+    #[test]
+    fn embedding_dimension_mismatch_scores_zero() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("a", "x", Some(vec![1.0, 0.0]))).unwrap();
+        let mut q = SearchQuery::new("x");
+        q.semantic_weight = 1.0;
+        q.keyword_weight = 0.0;
+        q.query_embedding = Some(vec![1.0, 0.0, 0.0]);
+        let r = s.search(&q).unwrap();
+        assert_eq!(r.len(), 1);
+        assert!(r[0].score.abs() < 1e-6);
     }
 }

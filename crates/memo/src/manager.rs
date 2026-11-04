@@ -85,9 +85,6 @@ impl MemoManager {
         let now = now_secs();
         let mut memos: Vec<Memo> = Vec::with_capacity(contents.len());
         for (content, emb) in contents.iter().zip(embs) {
-            if content.trim().is_empty() {
-                return Err(MemoError::EmptyContent);
-            }
             memos.push(Memo {
                 id: generate_id(),
                 memo_type: memo_type.clone(),
@@ -119,7 +116,7 @@ impl MemoManager {
         }
         // Delegate to the storage layer as a semantic-only search
         // (semantic_weight=1, keyword_weight=0).
-        let mut sq = SearchQuery::new(query.text.clone());
+        let mut sq = SearchQuery::new(&query.text);
         sq.top_k = query.top_k;
         sq.score_threshold = query.score_threshold;
         sq.memo_type = query.memo_type.clone();
@@ -196,7 +193,7 @@ impl MemoManager {
     pub fn recall_batch(&self, queries: &[RecallQuery]) -> Result<Vec<Vec<ScoredMemo>>> {
         let mut qs: Vec<SearchQuery> = Vec::with_capacity(queries.len());
         for q in queries {
-            let mut sq = SearchQuery::new(q.text.clone());
+            let mut sq = SearchQuery::new(&q.text);
             sq.top_k = q.top_k;
             sq.score_threshold = q.score_threshold;
             sq.memo_type = q.memo_type.clone();
@@ -351,7 +348,11 @@ impl RelationScorer for LocalRelationScorer {
             RelationKind::Entity => token_jaccard(&a.content, &b.content),
             RelationKind::Causal => {
                 // Heuristic: chronologically adjacent + keyword/entity overlap.
-                let adj = if a.created_at <= b.created_at { 0.5 } else { 0.0 };
+                let adj = if a.created_at <= b.created_at {
+                    0.5
+                } else {
+                    0.0
+                };
                 let overlap = token_jaccard(&a.content, &b.content);
                 (adj + 0.5 * overlap).min(1.0)
             }
@@ -385,7 +386,12 @@ impl MemoryController {
 
     /// Convenience constructor with the offline default scorer and config.
     pub fn with_defaults(embedder: Arc<dyn Embedder>, store: Arc<dyn MemoStore>) -> Self {
-        Self::new(embedder, store, Arc::new(LocalRelationScorer), RelationConfig::default())
+        Self::new(
+            embedder,
+            store,
+            Arc::new(LocalRelationScorer),
+            RelationConfig::default(),
+        )
     }
 
     /// Write→connect: after `memo` is persisted, pick bounded candidates and
@@ -459,9 +465,8 @@ impl MemoryController {
         sq.top_k = self.cfg.candidate_top_k;
         sq.semantic_weight = 0.7;
         sq.keyword_weight = 0.5;
-        if sq.query_embedding.is_none() {
-            sq.query_embedding = Some(self.embedder.embed(text)?);
-        }
+        // `sq` is freshly built above, so its embedding is always unset here.
+        sq.query_embedding = Some(self.embedder.embed(text)?);
         let seeds: Vec<MemoId> = self
             .store
             .search(&sq)?
@@ -491,7 +496,7 @@ impl MemoryController {
 
     /// Nearest existing memories to `memo` (excluding itself), bounded by config.
     fn candidate_memos(&self, memo: &Memo) -> Result<Vec<Memo>> {
-        let mut sq = SearchQuery::new(memo.content.clone());
+        let mut sq = SearchQuery::new(&memo.content);
         sq.top_k = self.cfg.candidate_top_k + 1;
         sq.semantic_weight = 0.7;
         sq.keyword_weight = 0.5;
@@ -518,7 +523,12 @@ mod tests {
     fn golden_path_add_search_get() {
         let m = mgr();
         let id = m
-            .add("user prefers rust for systems programming", MemoType::Working, HashMap::new(), 0.8)
+            .add(
+                "user prefers rust for systems programming",
+                MemoType::Working,
+                HashMap::new(),
+                0.8,
+            )
             .unwrap();
         let mut q = SearchQuery::new("rust systems");
         q.top_k = 5;
@@ -534,11 +544,23 @@ mod tests {
     fn vector_recall_ranks_similar() {
         let m = mgr();
         let rust = m
-            .add("user prefers rust for systems programming", MemoType::Working, HashMap::new(), 0.8)
+            .add(
+                "user prefers rust for systems programming",
+                MemoType::Working,
+                HashMap::new(),
+                0.8,
+            )
             .unwrap();
-        m.add("banana smoothie recipe with ice", MemoType::Working, HashMap::new(), 0.5)
+        m.add(
+            "banana smoothie recipe with ice",
+            MemoType::Working,
+            HashMap::new(),
+            0.5,
+        )
+        .unwrap();
+        let rs = m
+            .recall(RecallQuery::new("rust programming language"))
             .unwrap();
-        let rs = m.recall(RecallQuery::new("rust programming language")).unwrap();
         assert!(!rs.is_empty());
         // The semantically similar rust memory must rank first.
         assert_eq!(rs[0].memo.id, rust);
@@ -562,7 +584,9 @@ mod tests {
     #[test]
     fn update_changes_content_and_embedding() {
         let m = mgr();
-        let id = m.add("old content here", MemoType::ShortTerm, HashMap::new(), 0.5).unwrap();
+        let id = m
+            .add("old content here", MemoType::ShortTerm, HashMap::new(), 0.5)
+            .unwrap();
         m.update(
             &id,
             MemoPatch {
@@ -599,7 +623,9 @@ mod tests {
     #[test]
     fn forget_returns_bool() {
         let m = mgr();
-        let id = m.add("to forget", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        let id = m
+            .add("to forget", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
         assert!(m.forget(&id).unwrap());
         assert!(!m.forget(&id).unwrap());
     }
@@ -627,7 +653,11 @@ mod tests {
     fn add_batch_rejects_empty_content_and_bad_importance() {
         let m = mgr();
         assert!(matches!(
-            m.add_batch(&["ok".to_string(), "  ".to_string()], MemoType::Working, 0.5),
+            m.add_batch(
+                &["ok".to_string(), "  ".to_string()],
+                MemoType::Working,
+                0.5
+            ),
             Err(MemoError::EmptyContent)
         ));
         assert!(matches!(
@@ -645,7 +675,9 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let e: Arc<dyn Embedder> = Arc::new(LocalEmbedder::new(64));
         let m = MemoManager::with_sqlite_wal(e, path.to_str().unwrap()).unwrap();
-        let id = m.add("wal probe", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        let id = m
+            .add("wal probe", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
         assert!(m.get(&id).unwrap().is_some());
         let _ = std::fs::remove_file(&path);
     }
@@ -653,7 +685,9 @@ mod tests {
     #[test]
     fn consolidate_clamps() {
         let m = mgr();
-        let id = m.add("imp", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        let id = m
+            .add("imp", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
         m.consolidate(&id, 1.0).unwrap();
         assert!((m.get(&id).unwrap().unwrap().importance - 1.0).abs() < 1e-6);
         m.consolidate(&id, -5.0).unwrap();
@@ -663,8 +697,26 @@ mod tests {
     #[test]
     fn dedup_merges_similar() {
         let m = mgr();
-        let _a = m.add("user likes rust language", MemoType::LongTerm { kind: LongTermKind::Semantic }, HashMap::new(), 0.9).unwrap();
-        let _b = m.add("user likes rust language", MemoType::LongTerm { kind: LongTermKind::Semantic }, HashMap::new(), 0.4).unwrap();
+        let _a = m
+            .add(
+                "user likes rust language",
+                MemoType::LongTerm {
+                    kind: LongTermKind::Semantic,
+                },
+                HashMap::new(),
+                0.9,
+            )
+            .unwrap();
+        let _b = m
+            .add(
+                "user likes rust language",
+                MemoType::LongTerm {
+                    kind: LongTermKind::Semantic,
+                },
+                HashMap::new(),
+                0.4,
+            )
+            .unwrap();
         let removed = m.dedup(0.95).unwrap();
         assert_eq!(removed, 1);
         assert_eq!(m.list(None).unwrap().len(), 1);
@@ -673,7 +725,9 @@ mod tests {
     #[test]
     fn update_type_only_bumps_version() {
         let m = mgr();
-        let id = m.add("plain content", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        let id = m
+            .add("plain content", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
         m.update(
             &id,
             MemoPatch {
@@ -734,14 +788,22 @@ mod tests {
         let m = mgr();
         m.add("x", MemoType::Working, HashMap::new(), 0.5).unwrap();
         // empty text -> validation error before embedding
-        assert!(matches!(m.search(SearchQuery::new("")), Err(MemoError::InvalidParam(_))));
-        assert!(matches!(m.recall(RecallQuery::new("")), Err(MemoError::InvalidParam(_))));
+        assert!(matches!(
+            m.search(SearchQuery::new("")),
+            Err(MemoError::InvalidParam(_))
+        ));
+        assert!(matches!(
+            m.recall(RecallQuery::new("")),
+            Err(MemoError::InvalidParam(_))
+        ));
     }
 
     #[test]
     fn recall_with_provided_embedding_skips_embedder() {
         let m = mgr();
-        let id = m.add("user prefers rust", MemoType::Working, HashMap::new(), 0.8).unwrap();
+        let id = m
+            .add("user prefers rust", MemoType::Working, HashMap::new(), 0.8)
+            .unwrap();
         let mut q = RecallQuery::new("rust");
         q.query_embedding = Some(vec![1.0, 0.0, 0.0]); // injected; embedder must NOT be called
         let rs = m.recall(q).unwrap();
@@ -752,8 +814,10 @@ mod tests {
     fn dedup_invalid_threshold_and_noop() {
         let m = mgr();
         assert!(matches!(m.dedup(2.0), Err(MemoError::InvalidParam(_))));
-        m.add("unique one", MemoType::Working, HashMap::new(), 0.5).unwrap();
-        m.add("unique two", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        m.add("unique one", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
+        m.add("unique two", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
         // dissimilar -> nothing merged
         assert_eq!(m.dedup(0.99).unwrap(), 0);
         assert_eq!(m.list(None).unwrap().len(), 2);
@@ -772,7 +836,9 @@ mod tests {
     fn with_sqlite_builds_in_memory() {
         let e: Arc<dyn Embedder> = Arc::new(LocalEmbedder::new(64));
         let m = MemoManager::with_sqlite(e, ":memory:").unwrap();
-        let id = m.add("probe", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        let id = m
+            .add("probe", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
         assert!(m.get(&id).unwrap().is_some());
     }
 
@@ -800,10 +866,7 @@ mod tests {
         let b = manual_memo(&mgr, "b", "user likes rust systems programming", 200);
         mgr.store.add(&b).unwrap();
 
-        let ctrl = MemoryController::with_defaults(
-            mgr.embedder.clone(),
-            mgr.store.clone(),
-        );
+        let ctrl = MemoryController::with_defaults(mgr.embedder.clone(), mgr.store.clone());
         // Connect b -> graph should infer semantic/entity edges to a.
         let n = ctrl.connect(&b).unwrap();
         assert!(n >= 2, "expected symmetric semantic+entity edges, got {n}");
@@ -864,8 +927,14 @@ mod tests {
         let n = ctrl.connect(&a).unwrap();
         assert!(n >= 2, "expected symmetric + temporal edges, got {n}");
 
-        let from_a = ctrl.store.get_relations(Some(&"a".into()), None, None, 50).unwrap();
-        let to_a = ctrl.store.get_relations(None, Some(&"a".into()), None, 50).unwrap();
+        let from_a = ctrl
+            .store
+            .get_relations(Some(&"a".into()), None, None, 50)
+            .unwrap();
+        let to_a = ctrl
+            .store
+            .get_relations(None, Some(&"a".into()), None, 50)
+            .unwrap();
         let temporal_from_a = from_a.iter().any(|r| r.kind == RelationKind::Temporal);
         let temporal_to_a = to_a.iter().any(|r| r.kind == RelationKind::Temporal);
         // temporal only points from earlier -> later (a -> b), never reversed.
@@ -885,7 +954,9 @@ mod tests {
         let ctrl = MemoryController::with_defaults(mgr.embedder.clone(), mgr.store.clone());
         ctrl.connect(&a).unwrap();
         // Retrieval from a query near the memories returns scored items + a populated trace.
-        let res = ctrl.retrieve("rust programming", vec![], 20, 3, 10).unwrap();
+        let res = ctrl
+            .retrieve("rust programming", vec![], 20, 3, 10)
+            .unwrap();
         let ids: Vec<&MemoId> = res.items.iter().map(|i| &i.memo.id).collect();
         assert!(ids.contains(&&"a".to_string()));
         assert!(ids.contains(&&"b".to_string()));
@@ -900,10 +971,20 @@ mod tests {
     #[test]
     fn search_batch_returns_results_per_query() {
         let m = mgr();
-        m.add("rust systems programming", MemoType::Working, HashMap::new(), 0.8)
-            .unwrap();
-        m.add("banana smoothie recipe", MemoType::Working, HashMap::new(), 0.5)
-            .unwrap();
+        m.add(
+            "rust systems programming",
+            MemoType::Working,
+            HashMap::new(),
+            0.8,
+        )
+        .unwrap();
+        m.add(
+            "banana smoothie recipe",
+            MemoType::Working,
+            HashMap::new(),
+            0.5,
+        )
+        .unwrap();
         let qs = vec![SearchQuery::new("rust"), SearchQuery::new("banana")];
         let rs = m.search_batch(&qs).unwrap();
         assert_eq!(rs.len(), 2);
@@ -914,10 +995,20 @@ mod tests {
     #[test]
     fn recall_batch_returns_results_per_query() {
         let m = mgr();
-        m.add("rust systems programming", MemoType::Working, HashMap::new(), 0.8)
-            .unwrap();
-        m.add("banana smoothie recipe", MemoType::Working, HashMap::new(), 0.5)
-            .unwrap();
+        m.add(
+            "rust systems programming",
+            MemoType::Working,
+            HashMap::new(),
+            0.8,
+        )
+        .unwrap();
+        m.add(
+            "banana smoothie recipe",
+            MemoType::Working,
+            HashMap::new(),
+            0.5,
+        )
+        .unwrap();
         let qs = vec![
             RecallQuery::new("rust language"),
             RecallQuery::new("banana smoothie"),
@@ -931,7 +1022,9 @@ mod tests {
     #[test]
     fn update_metadata_only_bumps_version() {
         let m = mgr();
-        let id = m.add("content stays", MemoType::Working, HashMap::new(), 0.5).unwrap();
+        let id = m
+            .add("content stays", MemoType::Working, HashMap::new(), 0.5)
+            .unwrap();
         let mut meta = HashMap::new();
         meta.insert("k".to_string(), "v".to_string());
         m.update(
@@ -978,5 +1071,149 @@ mod tests {
         m.store.add(&no_emb("x2", "user likes rust", 0.4)).unwrap();
         assert_eq!(m.dedup(0.95).unwrap(), 0);
         assert_eq!(m.list(None).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn search_with_provided_embedding_skips_embedder() {
+        let m = mgr();
+        let id = m
+            .add(
+                "user prefers rust systems programming",
+                MemoType::Working,
+                HashMap::new(),
+                0.8,
+            )
+            .unwrap();
+        let mut q = SearchQuery::new("rust systems");
+        q.top_k = 5;
+        q.query_embedding = Some(m.embedder.embed("rust systems").unwrap());
+        let rs = m.search(q).unwrap();
+        assert!(rs.iter().any(|r| r.memo.id == id));
+    }
+
+    #[test]
+    fn search_batch_with_provided_embedding_skips_embedder() {
+        let m = mgr();
+        let id = m
+            .add(
+                "user prefers rust systems programming",
+                MemoType::Working,
+                HashMap::new(),
+                0.8,
+            )
+            .unwrap();
+        let mut q = SearchQuery::new("rust systems");
+        q.query_embedding = Some(m.embedder.embed("rust systems").unwrap());
+        let rs = m.search_batch(&[q]).unwrap();
+        assert_eq!(rs.len(), 1);
+        assert!(rs[0].iter().any(|r| r.memo.id == id));
+    }
+
+    #[test]
+    fn recall_batch_with_provided_embedding_skips_embedder() {
+        let m = mgr();
+        let id = m
+            .add(
+                "user prefers rust systems programming",
+                MemoType::Working,
+                HashMap::new(),
+                0.8,
+            )
+            .unwrap();
+        let mut q = RecallQuery::new("rust systems");
+        q.query_embedding = Some(m.embedder.embed("rust systems").unwrap());
+        let rs = m.recall_batch(&[q]).unwrap();
+        assert_eq!(rs.len(), 1);
+        assert!(rs[0].iter().any(|r| r.memo.id == id));
+    }
+
+    #[test]
+    fn dedup_skips_mismatched_embedding_dimensions() {
+        let m = mgr();
+        // Same content, incompatible vector dimensions: `cosine` errors, so the
+        // pair must be treated as non-duplicates instead of panicking.
+        let mk = |id: &str, emb: Vec<f32>, imp: f32| Memo {
+            id: id.into(),
+            memo_type: MemoType::Working,
+            content: "user likes rust".into(),
+            embedding: Some(emb),
+            metadata: HashMap::new(),
+            importance: imp,
+            version: 1,
+            created_at: 1,
+            updated_at: 1,
+        };
+        m.store.add(&mk("x1", vec![1.0, 0.0], 0.9)).unwrap();
+        m.store.add(&mk("x2", vec![1.0, 0.0, 0.0], 0.4)).unwrap();
+        assert_eq!(m.dedup(0.5).unwrap(), 0);
+        assert_eq!(m.list(None).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn relation_scorer_falls_back_without_embeddings() {
+        let m = mgr();
+        let mut a = manual_memo(&m, "a", "user likes rust programming", 100);
+        let mut b = manual_memo(&m, "b", "rust systems programming by the user", 200);
+        a.embedding = None;
+        b.embedding = None;
+        let scorer = LocalRelationScorer;
+        // Semantic view cannot use cosine here, so it falls back to keyword overlap.
+        let s = scorer.score(&a, &b, RelationKind::Semantic);
+        assert!((0.0..=1.0).contains(&s));
+        assert!(s > 0.0, "overlapping keywords must score above zero");
+    }
+
+    struct AlwaysScorer;
+
+    impl RelationScorer for AlwaysScorer {
+        fn score(&self, _a: &Memo, _b: &Memo, _kind: RelationKind) -> f32 {
+            1.0
+        }
+    }
+
+    #[test]
+    fn connect_never_writes_a_reversed_temporal_edge() {
+        let mgr = mgr();
+        let a = manual_memo(&mgr, "a", "user likes rust", 100);
+        let b = manual_memo(&mgr, "b", "user likes rust systems", 200);
+        mgr.store.add(&a).unwrap();
+        mgr.store.add(&b).unwrap();
+        // The heuristic scorer cannot produce a passing temporal score in the
+        // "newer -> older" direction, so force it with a constant scorer.
+        let ctrl = MemoryController::new(
+            mgr.embedder.clone(),
+            mgr.store.clone(),
+            Arc::new(AlwaysScorer),
+            RelationConfig::default(),
+        );
+        ctrl.connect(&b).unwrap();
+        let from_b = ctrl
+            .store
+            .get_relations(Some(&"b".into()), None, None, 50)
+            .unwrap();
+        assert!(!from_b.iter().any(|r| r.kind == RelationKind::Temporal));
+        // Symmetric views are still written in both directions.
+        assert!(from_b.iter().any(|r| r.kind == RelationKind::Semantic));
+    }
+
+    #[test]
+    fn token_jaccard_without_word_tokens_is_zero() {
+        let mk = |id: &str, content: &str, ts: i64| Memo {
+            id: id.into(),
+            memo_type: MemoType::Working,
+            content: content.into(),
+            embedding: None,
+            metadata: HashMap::new(),
+            importance: 0.5,
+            version: 1,
+            created_at: ts,
+            updated_at: ts,
+        };
+        let a = mk("a", "!!! ???", 100);
+        let b = mk("b", "... ---", 200);
+        let scorer = LocalRelationScorer;
+        // Both sides tokenize to empty sets: entity/causal overlap must be 0, not NaN.
+        assert_eq!(scorer.score(&a, &b, RelationKind::Entity), 0.0);
+        assert_eq!(scorer.score(&b, &a, RelationKind::Causal), 0.0);
     }
 }

@@ -49,7 +49,10 @@ mod tests {
 
     #[test]
     fn empty_errors() {
-        assert!(matches!(cosine(&[], &[1.0]), Err(MemoError::EmptyEmbedding)));
+        assert!(matches!(
+            cosine(&[], &[1.0]),
+            Err(MemoError::EmptyEmbedding)
+        ));
     }
 
     #[test]

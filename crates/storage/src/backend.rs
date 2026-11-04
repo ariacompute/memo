@@ -23,7 +23,9 @@ impl std::str::FromStr for BackendKind {
         match s {
             "embedded" => Ok(BackendKind::Embedded),
             "replicated" => Ok(BackendKind::Replicated),
-            _ => Err(MemoError::InvalidParam(format!("unknown backend kind: {s}"))),
+            _ => Err(MemoError::InvalidParam(format!(
+                "unknown backend kind: {s}"
+            ))),
         }
     }
 }
@@ -87,11 +89,17 @@ mod tests {
     #[test]
     fn embedded_kind_string_and_replicated_unimplemented() {
         assert_eq!(BackendKind::Embedded.as_str(), "embedded");
-        assert_eq!(BackendKind::from_str("embedded").unwrap(), BackendKind::Embedded);
+        assert_eq!(
+            BackendKind::from_str("embedded").unwrap(),
+            BackendKind::Embedded
+        );
         // ReplicatedBackend is a placeholder: open/migrate error, but kind resolves.
         assert!(ReplicatedBackend::open("any").is_err());
         let rb = ReplicatedBackend::new();
         assert_eq!(rb.backend_kind(), BackendKind::Replicated.as_str());
         assert!(rb.migrate().is_err());
+        // `Default` mirrors `new`.
+        let dflt = <ReplicatedBackend as Default>::default();
+        assert_eq!(dflt.backend_kind(), BackendKind::Replicated.as_str());
     }
 }

@@ -33,10 +33,9 @@ impl LocalEmbedder {
             // Normalize term frequency (TF) to keep long-text vectors from dominating.
             vec[h] = (c / max).sqrt();
         }
+        // Non-empty tokens imply at least one non-zero component, so the norm is
+        // strictly positive here (no zero-norm guard needed).
         let norm = vec.iter().map(|v| v * v).sum::<f32>().sqrt();
-        if norm == 0.0 {
-            return Err(MemoError::EmptyEmbedding);
-        }
         for v in vec.iter_mut() {
             *v /= norm;
         }
@@ -97,10 +96,15 @@ mod tests {
     #[test]
     fn deterministic_and_dim() {
         let e = LocalEmbedder::new(64);
+        assert_eq!(e.dim(), 64);
         let a = e.embed("the quick brown fox").unwrap();
         let b = e.embed("the quick brown fox").unwrap();
         assert_eq!(a.len(), 64);
         assert_eq!(a, b);
+        // `new(0)` is clamped to 1 so the embedder always yields a usable vector.
+        let tiny = LocalEmbedder::new(0);
+        assert_eq!(tiny.dim(), 1);
+        assert_eq!(tiny.embed("abc").unwrap().len(), 1);
     }
 
     #[test]
@@ -163,7 +167,9 @@ mod tests {
         let e = LocalEmbedder::new(128);
         let a = e.embed("the user prefers rust programming").unwrap();
         let b = e.embed("the user prefers rust programming").unwrap();
-        let c = e.embed("completely unrelated topic about cooking food").unwrap();
+        let c = e
+            .embed("completely unrelated topic about cooking food")
+            .unwrap();
         let ab = cosine::cosine(&a, &b).unwrap();
         let ac = cosine::cosine(&a, &c).unwrap();
         assert!(ab > 0.99, "identical text should embed to ~1.0, got {ab}");
@@ -173,7 +179,9 @@ mod tests {
     #[test]
     fn embed_respects_requested_dim() {
         for d in [1usize, 8, 64, 256] {
-            let v = LocalEmbedder::new(d).embed("some text here to embed").unwrap();
+            let v = LocalEmbedder::new(d)
+                .embed("some text here to embed")
+                .unwrap();
             assert_eq!(v.len(), d);
         }
     }

@@ -18,28 +18,19 @@ pub trait MemoStore: Send + Sync {
     /// Hybrid retrieval (semantic + keyword).
     fn search(&self, query: &SearchQuery) -> Result<Vec<ScoredMemo>>;
 
-    /// Batch hybrid retrieval. Default loops `search` per query; storage backends
-    /// may override to hold a single connection lock and reuse FTS5 prep.
-    fn search_batch(&self, queries: &[SearchQuery]) -> Result<Vec<Vec<ScoredMemo>>> {
-        queries.iter().map(|q| self.search(q)).collect()
-    }
+    /// Batch hybrid retrieval. Storage backends implement this to hold a single
+    /// connection lock / reuse FTS5 prep; in-memory stores simply loop `search`.
+    fn search_batch(&self, queries: &[SearchQuery]) -> Result<Vec<Vec<ScoredMemo>>>;
 
     /// List memories (optionally filtered by type); used by consolidation/dedup/CLI.
     fn list(&self, memo_type: Option<MemoType>) -> Result<Vec<Memo>>;
 
-    /// Batch add (default: one by one; backends may override with a transactional implementation).
-    fn add_batch(&self, memories: &[Memo]) -> Result<()> {
-        for m in memories {
-            self.add(m)?;
-        }
-        Ok(())
-    }
+    /// Batch add; backends implement this transactionally where possible.
+    fn add_batch(&self, memories: &[Memo]) -> Result<()>;
 
     /// Enable WAL journal mode if the backend supports it (reduces write tail under
-    /// batch/concurrent load). Default is a no-op for backends without a journal.
-    fn enable_wal(&self) -> Result<()> {
-        Ok(())
-    }
+    /// batch/concurrent load); stores without a journal are a no-op.
+    fn enable_wal(&self) -> Result<()>;
 
     // --- Multi-relational memory plane (Jev-Mem inspired) ---
 
@@ -77,11 +68,9 @@ pub trait Embedder: Send + Sync {
     fn embed(&self, text: &str) -> Result<Vec<f32>>;
     /// Vector dimension.
     fn dim(&self) -> usize;
-    /// Batch encode. Default loops `embed` per text; embedders may override to
-    /// share normalization/allocation across the batch (used by write-path batching).
-    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
-        texts.iter().map(|t| self.embed(t)).collect()
-    }
+    /// Batch encode; embedders share normalization/allocation across the batch
+    /// (used by write-path batching).
+    fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>>;
 }
 
 /// Low-level persistence backend abstraction (M1 only implements SQLite; a replicated
@@ -168,6 +157,21 @@ mod tests {
                 .collect())
         }
 
+        fn search_batch(&self, queries: &[SearchQuery]) -> Result<Vec<Vec<ScoredMemo>>> {
+            queries.iter().map(|q| self.search(q)).collect()
+        }
+
+        fn add_batch(&self, memories: &[Memo]) -> Result<()> {
+            for m in memories {
+                self.add(m)?;
+            }
+            Ok(())
+        }
+
+        fn enable_wal(&self) -> Result<()> {
+            Ok(())
+        }
+
         fn add_relation(&self, rel: &Relation) -> Result<()> {
             rel.validate()?;
             let memos = self.memos.lock().unwrap();
@@ -242,9 +246,11 @@ mod tests {
             let edges: Map<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
                 let mut m = Map::new();
                 for r in rels.iter() {
-                    m.entry(r.from_id.clone())
-                        .or_insert_with(Vec::new)
-                        .push((r.to_id.clone(), r.score, r.kind));
+                    m.entry(r.from_id.clone()).or_insert_with(Vec::new).push((
+                        r.to_id.clone(),
+                        r.score,
+                        r.kind,
+                    ));
                 }
                 m
             };
@@ -254,7 +260,7 @@ mod tests {
                 &query.views,
                 query.budget,
                 query.max_hops,
-                |n| edges.get(n).cloned().unwrap_or_default(),
+                &mut |n| edges.get(n).cloned().unwrap_or_default(),
             );
             let memos = self.memos.lock().unwrap();
             let mut items = Vec::new();
@@ -284,6 +290,9 @@ mod tests {
         }
         fn dim(&self) -> usize {
             3
+        }
+        fn embed_batch(&self, texts: &[&str]) -> Result<Vec<Vec<f32>>> {
+            texts.iter().map(|t| self.embed(t)).collect()
         }
     }
 
@@ -317,6 +326,208 @@ mod tests {
         bad.content = "".into();
         assert!(matches!(s.add(&bad), Err(MemoError::EmptyContent)));
         let _ = &mut m;
+    }
+
+    fn sample_memo(id: &str) -> Memo {
+        Memo {
+            id: id.into(),
+            memo_type: MemoType::Working,
+            content: "x".into(),
+            embedding: None,
+            metadata: Map::new(),
+            importance: 0.5,
+            version: 1,
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn trait_contract_update_search_list() {
+        let s = MemStore::new();
+        put(&s, "a");
+        // update: existing succeeds, unknown id is NotFound.
+        let mut m = s.get(&"a".into()).unwrap().unwrap();
+        m.content = "updated".into();
+        s.update(&m).unwrap();
+        assert_eq!(s.get(&"a".into()).unwrap().unwrap().content, "updated");
+        let missing = Memo {
+            id: "zz".into(),
+            ..m.clone()
+        };
+        assert!(matches!(s.update(&missing), Err(MemoError::NotFound(_))));
+
+        // search: normal, invalid query, type filter, score threshold.
+        assert_eq!(s.search(&SearchQuery::new("updated")).unwrap().len(), 1);
+        assert!(matches!(
+            s.search(&SearchQuery::new("  ")),
+            Err(MemoError::InvalidParam(_))
+        ));
+        let mut typed = SearchQuery::new("updated");
+        typed.memo_type = Some(MemoType::ShortTerm);
+        assert!(s.search(&typed).unwrap().is_empty());
+        let mut filtered = SearchQuery::new("updated");
+        filtered.score_threshold = 2.0;
+        assert!(s.search(&filtered).unwrap().is_empty());
+
+        // list: unfiltered and filtered by type.
+        assert_eq!(s.list(None).unwrap().len(), 1);
+        assert!(s.list(Some(MemoType::ShortTerm)).unwrap().is_empty());
+    }
+
+    #[test]
+    fn trait_default_batch_and_wal() {
+        let s = MemStore::new();
+        // `add_batch` / `search_batch` / `enable_wal` defaults (MemStore does not override them).
+        s.add_batch(&[sample_memo("b1"), sample_memo("b2")])
+            .unwrap();
+        assert_eq!(s.list(None).unwrap().len(), 2);
+        assert!(matches!(
+            s.add_batch(&[sample_memo("b1")]),
+            Err(MemoError::DuplicateId(_))
+        ));
+        s.enable_wal().unwrap();
+        let out = s
+            .search_batch(&[SearchQuery::new("x"), SearchQuery::new("x")])
+            .unwrap();
+        assert_eq!(out.len(), 2);
+        assert!(s.search_batch(&[]).unwrap().is_empty());
+    }
+
+    #[test]
+    fn mem_store_relations_sort_newest_first() {
+        let s = MemStore::new();
+        put(&s, "a");
+        put(&s, "b");
+        put(&s, "c");
+        let mk = |to: &str, created_at: i64| Relation {
+            from_id: "a".into(),
+            to_id: to.into(),
+            kind: RelationKind::Semantic,
+            score: 0.5,
+            provenance: "local".into(),
+            created_at,
+        };
+        s.add_relation(&mk("b", 1)).unwrap();
+        s.add_relation(&mk("c", 5)).unwrap();
+        let rels = s.get_relations(Some(&"a".into()), None, None, 10).unwrap();
+        // Newest first (forces a real comparison in `sort_by_key`).
+        assert_eq!(rels[0].to_id, "c");
+        assert_eq!(rels[1].to_id, "b");
+        // `top_k` keeps the newest edges.
+        assert_eq!(s.get_relations(None, None, None, 1).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn mem_store_relation_filters_cover_every_field() {
+        let s = MemStore::new();
+        put(&s, "a");
+        put(&s, "b");
+        let rel = Relation {
+            from_id: "a".into(),
+            to_id: "b".into(),
+            kind: RelationKind::Semantic,
+            score: 0.9,
+            provenance: "local".into(),
+            created_at: 1,
+        };
+        s.add_relation(&rel).unwrap();
+        // Each filter field must be exercised both as `Some` and as no-match.
+        assert_eq!(
+            s.get_relations(Some(&"a".into()), None, None, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            s.get_relations(None, Some(&"b".into()), None, 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            s.get_relations(None, None, Some(RelationKind::Semantic), 10)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            s.get_relations(
+                Some(&"a".into()),
+                Some(&"b".into()),
+                Some(RelationKind::Semantic),
+                10
+            )
+            .unwrap()
+            .len(),
+            1
+        );
+        assert!(s
+            .get_relations(None, Some(&"a".into()), None, 10)
+            .unwrap()
+            .is_empty());
+
+        // Same coverage for the delete filters (re-adding between deletes).
+        assert_eq!(
+            s.delete_relations(Some(&"a".into()), None, None).unwrap(),
+            1
+        );
+        s.add_relation(&rel).unwrap();
+        assert_eq!(
+            s.delete_relations(None, Some(&"b".into()), None).unwrap(),
+            1
+        );
+        s.add_relation(&rel).unwrap();
+        assert_eq!(
+            s.delete_relations(None, None, Some(RelationKind::Semantic))
+                .unwrap(),
+            1
+        );
+        assert!(s.get_relations(None, None, None, 10).unwrap().is_empty());
+    }
+
+    #[test]
+    fn expand_skips_relations_to_forgotten_memories() {
+        let s = MemStore::new();
+        put(&s, "a");
+        put(&s, "b");
+        let rel = Relation {
+            from_id: "a".into(),
+            to_id: "b".into(),
+            kind: RelationKind::Semantic,
+            score: 0.9,
+            provenance: "local".into(),
+            created_at: 1,
+        };
+        s.add_relation(&rel).unwrap();
+        // Forgetting the target leaves a dangling edge; expansion must skip it.
+        assert!(s.forget(&"b".into()).unwrap());
+        let q = GraphRetrieveQuery {
+            seeds: vec!["a".into()],
+            views: vec![],
+            budget: 10,
+            max_hops: 3,
+            top_k: 10,
+        };
+        let res = s.expand(&q).unwrap();
+        assert_eq!(res.items.len(), 1);
+        assert_eq!(res.items[0].memo.id, "a");
+        assert_eq!(res.trace.hits, 1);
+    }
+
+    #[test]
+    fn add_relation_missing_from_endpoint() {
+        let s = MemStore::new();
+        put(&s, "b");
+        let rel = Relation {
+            from_id: "zz".into(),
+            to_id: "b".into(),
+            kind: RelationKind::Semantic,
+            score: 0.5,
+            provenance: "local".into(),
+            created_at: 1,
+        };
+        assert!(matches!(s.add_relation(&rel), Err(MemoError::NotFound(_))));
     }
 
     #[test]
@@ -399,9 +610,7 @@ mod tests {
         })
         .unwrap();
 
-        let rels = s
-            .get_relations(Some(&"a".into()), None, None, 10)
-            .unwrap();
+        let rels = s.get_relations(Some(&"a".into()), None, None, 10).unwrap();
         assert_eq!(rels.len(), 1);
         assert_eq!(rels[0].to_id, "b");
         assert!((rels[0].score - 0.99).abs() < 1e-6);
@@ -423,11 +632,14 @@ mod tests {
         assert_eq!(res.trace.hits, 3);
 
         // Delete by from.
-        let removed = s
-            .delete_relations(Some(&"a".into()), None, None)
-            .unwrap();
+        let removed = s.delete_relations(Some(&"a".into()), None, None).unwrap();
         assert_eq!(removed, 1);
-        assert_eq!(s.get_relations(Some(&"a".into()), None, None, 10).unwrap().len(), 0);
+        assert_eq!(
+            s.get_relations(Some(&"a".into()), None, None, 10)
+                .unwrap()
+                .len(),
+            0
+        );
 
         // Empty filter rejected.
         assert!(matches!(

@@ -42,6 +42,8 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 
 ## 常用命令
 - `cargo test` / `cargo test -p memo-core` / `cargo build` / `cargo clippy --all-targets`
+- CI 等价（`.github/workflows/ci.yml`）：`cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace`
+- 覆盖率自查（仅本地，不作 CI 门禁）：`cargo llvm-cov clean --workspace && cargo llvm-cov --workspace --summary-only`
 - `cargo run -p aria-memo -- --help` / `cargo run -p aria-memo -- bench --size 100 --json` / `cargo run -p aria-memo -- recall --text "rust systems programming" --top-k 5`
 - `python benches/run.py --track a` / `python benches/run.py --track b --dry-run`
 
@@ -52,6 +54,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 - M4：多关系记忆平面（Jev-Mem 启发）。已落地（commit `13ab4ec`）：`memo-core` 增加 `RelationKind`/`Relation`/`GraphRetrieveQuery`/`RetrieveTrace`/`GraphRetrieveResult` 与 `graph_bfs`；`MemoStore` 扩展 `add_relation`/`get_relations`/`delete_relations`/`expand`；`storage/sqlite` 新增独立 `relations` 表 + 四视图 CRUD 与有界 BFS `expand`；`memo` 新增 `MemoryController` + `RelationScorer`（默认 `LocalRelationScorer` 离线）；CLI 新增 `connect`/`relate`/`relations`/`graph` 与 `search --graph`。零网络依赖，可插拔 LLM scorer。详见 requirements.md §1.3 / §2.5–§2.8 / task.md M4。
 - M5：检索优化（FTS5 词法下推 + 批量检索）。已落地：`keyword_weight` 默认 `0.3 → 0.5`（词法命中更早剪枝候选）；rusqlite 启用 `fts5` feature，`memories_fts` 独立 FTS5 表（add/update/forget/migrate 回填同步）；`search` 重写为「FTS5 `bm25()` 候选下推 + Rust 内存余弦精排」，词法命中时仅对候选集打分、否则全表扫描保语义召回；`MemoStore` 增 `search_batch` 默认方法，`MemoManager` 增 `search_batch`/`recall_batch`，CLI 增 `search-batch` 子命令与 `bench --batch` 吞吐埋点。详见 requirements.md §1.1 / §2.2 / §2.3 / §2.4 / §3 / task.md M5。
 - M6：Track A 扩展评测（规模曲线 / 本地控制组 / A2 方差 / 写长尾）。已落地：Rust 侧 `Embedder::embed_batch` + `MemoManager::add_batch` + `SqliteStore::enable_wal`（WAL）；CLI `bench` 增 `--wal`/`--batch-embed`/`--bulk`，报告 `add_baseline`/`add_wal`/`add_batch_embed`/`add_bulk` 四分段；`benches` 新增本地嵌入式控制组 `sqlite_vec`（pip `sqlite-vec`）、`chromem`（chromem-go 子进程），缺依赖/二进制则 skip 并写 reason；`run_microbench` 改多尺寸 sweep（默认 1k/10k/100k）输出 p99 增长因子 + 亚线性判定；`run_retrieval_quality` 支持 `synthetic_v2`（84 条）与 `track_b:*` 真实语料，输出 Recall@k/MRR ± 样本标准差；`metrics/retrieval.py` 增 `mean_std`。详见 requirements.md §6.3 / §6.5 / §6.6 / §6.8 / task.md M6。
+- M8：测试覆盖率对齐 100%（已落地）。5 个 crate 补齐正常 + 异常路径单测；CLI 抽出可注入接缝（`upgrade` 的 `HttpGet`、`setup` 的 `Prompter`、`config` 的 `resolve_memo_home`、`main` 的 `entry(args)->i32`），对外参数/输出/退出码不变；删除可证明死分支，未引入 `#[coverage(off)]`。实测 `cargo llvm-cov --workspace --summary-only`：Lines 100.00%、Functions 100.00%（Regions 不入闸）。新增 `.github/workflows/ci.yml`（fmt + clippy `-D warnings` + `cargo test --workspace`，不含覆盖率）。详见 task.md M8。
 - M7：多语言词级切分（覆盖 cockpit 全部 13 种本地语言 en zh zh-TW es fr de it ru ja ko pt ar hi）。已落地：FTS5 预切分按 Unicode script 路由——中文 zh/zh-TW 走 `jieba-rs`、日语 ja 走 `lindera`+内嵌 ipadic、韩语 ko 走 `lindera`+内嵌 ko-dic，其余空格型语言（en/es/fr/de/it/ru/pt/ar/hi）沿用 `unicode61` 空格切分；`segment()` 由 `fts5_index_text`（空格拼接索引 token）与 `fts5_match_expr`（OR 拼接查询 token）共享，保证索引/查询 token 对齐。jieba-rs / lindera 分词器以进程级 `OnceLock` 单例持有（词典仅加载一次）；`is_index_term` 仍丢弃纯标点/空白。`migrate` 的 `user_version` 由 3 升到 4 触发旧库一次性重建。依赖 `lindera`/`lindera-dictionary`/`lindera-ipadic`(embed-ipadic)/`lindera-ko-dic`(embed-ko-dic)，词典内嵌（构建期/运行期零网络下载，代价是二进制更大）。详见 requirements.md §1.4 / §3 / task.md M7。
 
 ## 注意事项

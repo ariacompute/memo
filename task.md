@@ -116,6 +116,22 @@
 - 迁移：既有库（user_version < 4）打开时重建 FTS 并回填，中文既有命中不被破坏。
 - 文档：README / README_cn / AGENTS.md / requirements.md(§1.4/§3/§5.2) / 本 M7 同步。
 
+## M8 — 测试覆盖率对齐 100%（已落地）
+
+> 需求：5 个 crate 补齐正常 + 异常路径单测，`cargo llvm-cov --workspace` 行/函数覆盖率 100%；覆盖率**不作** CI 门禁。
+
+60. [x] core/embed：`MemoError` 全变体 `Clone`/`Display`、trait 默认方法、`keyword_weight` 越界、纯标点 query、`dim()`、`graph_bfs` 已访问邻居跳过、`lexical_relevance` 标点回退
+61. [x] storage：旧库（`user_version<4`）重建 FTS、二次打开增量回填、损坏 `memo_type`/relation kind 行、`list` 类型过滤、`get_relations` to/kind 过滤、`MemoStore::enable_wal` 转发、嵌套路径建父目录、维度不一致 cosine、FTS5 纯标点回退、`ReplicatedBackend::default`
+62. [x] memo：预置 embedding 的 search/recall/批量路径、dedup 维度不一致、`token_jaccard` 空 token、scorer 无 embedding 回退、temporal 反向边、`MemStore` 关系排序/过滤
+63. [x] CLI 接缝重构（对外参数/输出/退出码不变）：`upgrade` 增 `HttpGet` 注入（覆盖 2xx/非 2xx/坏 JSON、zip/tar.gz/未知扩展、安装缺失/改名回退、版本相同提前返回）；`setup` 增 `Prompter` 注入（TTY 1/2/空/非法、非 TTY 三级回退、status 有/无）；`config` 抽 `resolve_memo_home` 纯函数；`main` 抽 `entry(args)->i32` 并逐子命令补测
+64. [x] 死分支清理：删除可证明不可达的守卫与重复校验（如 `lindera_tokens` 的错误映射改为 `unwrap_or_default()`），不引入 `#[coverage(off)]`；真实 stdin/stdout 与网络出口保留为薄包装
+65. [x] 新增 `.github/workflows/ci.yml`：push(main)/PR 触发 → `cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace`；不安装 llvm-cov、不设覆盖率阈值
+66. [x] 验收：`cargo llvm-cov --workspace --summary-only` → Lines 6025/6025 = 100.00%（missed 0）、Functions 603/603 = 100.00%（missed 0）；Regions 97.73%（不作门禁）；CI 三条命令本地全绿
+
+### M8
+- 覆盖率仅本地自查：`cargo llvm-cov clean --workspace && cargo llvm-cov --workspace --summary-only`（先 clean，避免旧 profdata 串味）。
+- 测试离线、可并行：环境变量改动走 crate 级 `env_lock()`，临时目录以 `process::id()` 命名，SQLite 优先 `:memory:`。
+
 ## eMudhra / emSign 证书私钥泄露响应（2026-10）
 
 背景：eMudhra(emSign) 8 张中间 CA 私钥极弱（P-384 私钥标量 <256），可被反推伪造任意域名证书；
