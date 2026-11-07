@@ -1131,7 +1131,9 @@ mod tests {
 
     #[test]
     fn invalid_archive_maps_to_invalid_data() {
-        let e = invalid_archive(zip::result::ZipError::InvalidArchive("bad header"));
+        // `InvalidArchive` holds `&'static str` in older zip 2.x and
+        // `Cow<'static, str>` since 2.6; `.into()` satisfies both.
+        let e = invalid_archive(zip::result::ZipError::InvalidArchive("bad header".into()));
         assert_eq!(e.kind(), io::ErrorKind::InvalidData);
         assert!(e.to_string().contains("bad header"));
     }
