@@ -43,6 +43,7 @@ core(模型/错误/trait) → storage(SQLite 持久化) / embed(本地嵌入) �
 ## 常用命令
 - `cargo test` / `cargo test -p memo-core` / `cargo build` / `cargo clippy --all-targets`
 - CI 等价（`.github/workflows/ci.yml`）：`cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace` → `python -m unittest discover -s benches/tests -t benches`
+- E2E：`cargo test -p aria-memo --test cli_binary`（已含在 workspace `cargo test`）；`crates/cli/tests/cli_binary.rs` 驱动真实二进制 + 唯一临时 DB，覆盖完整记忆/关系/图检索业务流与 JSON/退出码。
 - 覆盖率自查（仅本地，不作 CI 门禁）：`LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov clean --workspace && LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov --workspace --summary-only --show-missing-lines`（缓存由 `scripts/prefetch-lindera.sh` 预热）
 - `cargo run -p aria-memo -- --help` / `cargo run -p aria-memo -- bench --size 100 --json` / `cargo run -p aria-memo -- recall --text "rust systems programming" --top-k 5`
 - `python benches/run.py --track a` / `python benches/run.py --track b --dry-run` / `python -m unittest discover -s benches/tests -t benches` / `python -m pytest benches/tests`

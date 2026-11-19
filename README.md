@@ -29,6 +29,7 @@ no heavy ML frameworks. Ships an offline-first, multi-relational memory plane<br
 - [🔍 Search & retrieval](#search--retrieval)
 - [🚀 Quick start](#quick-start)
 - [🧰 Command line](#command-line)
+- [🔨 Development](#development)
 
 **Internals & data**
 
@@ -39,7 +40,6 @@ no heavy ML frameworks. Ships an offline-first, multi-relational memory plane<br
 **Trust & governance**
 
 - [🔏 Trust store security](#trust-store-security)
-- [🔨 Development](#development)
 - [📚 Documentation](#documentation)
 - [📝 License](#license)
 - [🤝 Engineering conventions](#engineering-conventions)
@@ -101,11 +101,14 @@ Hybrid search blends semantic (cosine over local embeddings) and lexical (keywor
 ```bash
 cargo build
 cargo test
+cargo test -p aria-memo --test cli_binary  # e2e: real binary + temp SQLite DB
 cargo run -p aria-memo -- add --type working --content "User likes Rust" --importance 0.8
 cargo run -p aria-memo -- search --text "Rust" --top-k 5
 ```
 
 After the first build, `cargo test` passes without Postgres, network, or credentials — everything is local SQLite. The first build downloads the embedded Japanese/Korean dictionaries via `lindera-ipadic` / `lindera-ko-dic`; prewarm once with `./scripts/prefetch-lindera.sh` and set `LINDERA_BUILD_DICTIONARY_CACHE_DIR` for offline rebuilds. Runtime remains zero-network.
+
+Run only the binary-level e2e suite with `cargo test -p aria-memo --test cli_binary` (also included in `cargo test`). Tests live in `crates/cli/tests/cli_binary.rs` and drive the compiled `aria-memo` executable against a unique temporary SQLite DB, covering `add` → `get` → `search` → `recall` → `list` → `update` → `forget`, `relate` → `relations` → `graph` / `search --graph`, JSON output, and exit codes.
 
 <div align="right">
 
@@ -141,6 +144,26 @@ After the first build, `cargo test` passes without Postgres, network, or credent
 `aria-memo upgrade [version]` replaces the running binary with the latest stable release (or a specific `version` tag) from GitHub/Gitee Releases. `upgrade --url <URL>` overrides `upgrade_url` for this run. The resolved `upgrade_url` precedence is: `--url` > `~/.ariacompute/memo-cli.yml` > `ARIA_MEMO_UPGRADE_URL` env > built-in default (`https://github.com/ariacompute`). Release assets follow `aria-memo_{ver}_{os}.tar.gz` (`os` ∈ `linux_x86_64`/`linux_arm64`/`macos`/`windows_x86_64`; `.zip` on Windows).
 
 > The home directory `~/.ariacompute` is overridable via `ARIA_COMPUTE_HOME`.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
+
+</div>
+
+## 🔨 Development
+
+| Target | Effect |
+|---|---|
+| `cargo test` | `cargo test --workspace` |
+| `cargo test -p memo-core` | unit tests for the core crate |
+| `cargo build` | build all crates |
+| `cargo run -p aria-memo -- <cmd>` | run the CLI |
+| `cargo clippy --all-targets` | lint all targets |
+| `cargo fmt --all -- --check` | verify formatting |
+| `scripts/check-emudhra.sh <bundle>` | offline eMudhra/emSign CA fingerprint scan |
+
+`cargo test` passes without Postgres, network, or credentials — every external dependency is local (SQLite) or faked.
 
 <div align="right">
 
@@ -311,26 +334,6 @@ The 2026-10 eMudhra (emSign) intermediate CA key compromise is covered in three 
 ```bash
 scripts/check-emudhra.sh /etc/ssl/certs/ca-certificates.crt
 ```
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-## 🔨 Development
-
-| Target | Effect |
-|---|---|
-| `cargo test` | `cargo test --workspace` |
-| `cargo test -p memo-core` | unit tests for the core crate |
-| `cargo build` | build all crates |
-| `cargo run -p aria-memo -- <cmd>` | run the CLI |
-| `cargo clippy --all-targets` | lint all targets |
-| `cargo fmt --all -- --check` | verify formatting |
-| `scripts/check-emudhra.sh <bundle>` | offline eMudhra/emSign CA fingerprint scan |
-
-`cargo test` passes without Postgres, network, or credentials — every external dependency is local (SQLite) or faked.
 
 <div align="right">
 

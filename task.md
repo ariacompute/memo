@@ -129,6 +129,7 @@
 64. [x] 死分支清理：删除可证明不可达的守卫与重复校验（如 `lindera_tokens` 的错误映射改为 `unwrap_or_default()`），不引入 `#[coverage(off)]`；真实 stdin/stdout 与网络出口保留为薄包装
 65. [x] 新增 `.github/workflows/ci.yml`：push(main)/PR 触发 → `cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace` → `python -m unittest discover -s benches/tests -t benches`；ci/release 另配 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` + `actions/cache`；不设覆盖率阈值
 66. [x] 验收（`cargo llvm-cov 0.9.1` 实测，先用 `scripts/prefetch-lindera.sh` 预热缓存）：Lines 6153/6153 = 100.00%（missed 0）、Functions 638/638 = 100.00%（missed 0）；Regions 7967 total / 175 missed = 97.80%（不作门禁）；Rust 与 Python 门禁本地全绿
+67. [x] E2E：`crates/cli/tests/cli_binary.rs` 驱动真实二进制 + 唯一临时 DB，覆盖 version/退出码、`add`→`get`→`search`→`recall`→`list`→`update`→`forget`、`relate`→`relations`→`graph`/`search --graph` 与非法输入退出码（6 项，随 `cargo test --workspace` 执行）
 
 ### M8
 - 覆盖率仅本地自查：`LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov clean --workspace && LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov --workspace --summary-only --show-missing-lines`（先 clean，避免旧 profdata 串味；缓存由 `scripts/prefetch-lindera.sh` 预热）。

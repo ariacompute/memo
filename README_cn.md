@@ -5,8 +5,9 @@
 
 **面向 LLM Agent 的本地优先长期记忆存储**
 
-Rust 实现的边缘/移动端部署：记忆的增删改查、语义 + 关键词混合检索、巩固、去重与遗忘——<br/>
-零网络依赖、不引入重型 ML 框架。还内置默认离线的多关系记忆平面<br/>
+Rust 实现的边缘/移动端部署：记忆的增删改查、语义 + 关键词混合检索、<br/>
+巩固、去重与遗忘——零网络依赖、不引入重型 ML 框架。<br/>
+还内置默认离线的多关系记忆平面<br/>
 （semantic / temporal / causal / entity 四视图）。
 
 [English](./README.md) · **简体中文** · [文档](./docs)
@@ -28,6 +29,7 @@ Rust 实现的边缘/移动端部署：记忆的增删改查、语义 + 关键�
 - [🔍 检索](#search--retrieval)
 - [🚀 快速开始](#quick-start)
 - [🧰 命令行](#command-line)
+- [🔨 开发](#development)
 
 **内部机制与数据**
 
@@ -38,7 +40,6 @@ Rust 实现的边缘/移动端部署：记忆的增删改查、语义 + 关键�
 **信任与治理**
 
 - [🔏 信任库安全](#trust-store-security)
-- [🔨 开发](#development)
 - [📚 文档](#documentation)
 - [📝 许可证](#license)
 - [🤝 工程规范](#engineering-conventions)
@@ -100,11 +101,14 @@ cli(aria-memo) → memo(编排) → storage(SQLite) / embed(本地嵌入) → co
 ```bash
 cargo build
 cargo test
+cargo test -p aria-memo --test cli_binary  # e2e：真实二进制 + 临时 SQLite 库
 cargo run -p aria-memo -- add --type working --content "用户喜欢 Rust" --importance 0.8
 cargo run -p aria-memo -- search --text "Rust" --top-k 5
 ```
 
 首次构建完成后，`cargo test` 无需 Postgres、网络或凭据即可通过——全部基于本地 SQLite。首次构建会由 `lindera-ipadic` / `lindera-ko-dic` 下载内嵌的日/韩词典；可用 `./scripts/prefetch-lindera.sh` 预热一次，并设置 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` 供后续离线构建复用。**运行期**始终零网络。
+
+单独运行二进制级 e2e：`cargo test -p aria-memo --test cli_binary`（也已包含在 `cargo test` 中）。测试位于 `crates/cli/tests/cli_binary.rs`，用独立的临时 SQLite 数据库驱动编译后的 `aria-memo` 可执行文件，覆盖 `add` → `get` → `search` → `recall` → `list` → `update` → `forget`、`relate` → `relations` → `graph` / `search --graph`、JSON 输出与退出码。
 
 <div align="right">
 
@@ -140,6 +144,26 @@ cargo run -p aria-memo -- search --text "Rust" --top-k 5
 `aria-memo upgrade [version]` 从 GitHub/Gitee Releases 下载并原地替换当前二进制（不传版本升级到最新稳定版，传 `version` 升级到指定 tag）。`upgrade --url <URL>` 本次运行覆盖配置中的 `upgrade_url`。`upgrade_url` 解析优先级：`--url` > `~/.ariacompute/memo-cli.yml` > `ARIA_MEMO_UPGRADE_URL` 环境变量 > 内置默认（`https://github.com/ariacompute`）。Release 资产命名约定：`aria-memo_{ver}_{os}.tar.gz`（`os` ∈ `linux_x86_64`/`linux_arm64`/`macos`/`windows_x86_64`，Windows 为 `.zip`）。
 
 > home 目录 `~/.ariacompute` 可由 `ARIA_COMPUTE_HOME` 覆盖。
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
+
+</div>
+
+## 🔨 开发
+
+| 目标 | 作用 |
+|---|---|
+| `cargo test` | `cargo test --workspace` |
+| `cargo test -p memo-core` | core crate 单测 |
+| `cargo build` | 构建全部 crate |
+| `cargo run -p aria-memo -- <cmd>` | 运行 CLI |
+| `cargo clippy --all-targets` | 对所有 target 做 lint |
+| `cargo fmt --all -- --check` | 校验格式 |
+| `scripts/check-emudhra.sh <bundle>` | 离线扫描 eMudhra/emSign CA 指纹 |
+
+`cargo test` 无需 Postgres、网络或凭据即可通过——每个外部依赖都是本地（SQLite）或被 fake。
 
 <div align="right">
 
@@ -310,26 +334,6 @@ python benches/run.py --track b --benchmarks halumem
 ```bash
 scripts/check-emudhra.sh /etc/ssl/certs/ca-certificates.crt
 ```
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-## 🔨 开发
-
-| 目标 | 作用 |
-|---|---|
-| `cargo test` | `cargo test --workspace` |
-| `cargo test -p memo-core` | core crate 单测 |
-| `cargo build` | 构建全部 crate |
-| `cargo run -p aria-memo -- <cmd>` | 运行 CLI |
-| `cargo clippy --all-targets` | 对所有 target 做 lint |
-| `cargo fmt --all -- --check` | 校验格式 |
-| `scripts/check-emudhra.sh <bundle>` | 离线扫描 eMudhra/emSign CA 指纹 |
-
-`cargo test` 无需 Postgres、网络或凭据即可通过——每个外部依赖都是本地（SQLite）或被 fake。
 
 <div align="right">
 
