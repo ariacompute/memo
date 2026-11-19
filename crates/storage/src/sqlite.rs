@@ -1117,6 +1117,35 @@ mod tests {
     }
 
     #[test]
+    fn corrupt_metadata_errors_on_search_lexical_candidates() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("x", "rust systems programming", Some(vec![1.0, 0.0])))
+            .unwrap();
+        s.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE memories SET metadata='not-json' WHERE id='x'", [])
+            .unwrap();
+        let q = SearchQuery::new("rust");
+        assert!(matches!(s.search(&q), Err(MemoError::Serialization(_))));
+    }
+
+    #[test]
+    fn corrupt_metadata_errors_on_search_full_scan() {
+        let s = SqliteStore::open(":memory:").unwrap();
+        s.add(&mem("x", "rust systems programming", Some(vec![1.0, 0.0])))
+            .unwrap();
+        s.conn
+            .lock()
+            .unwrap()
+            .execute("UPDATE memories SET metadata='not-json' WHERE id='x'", [])
+            .unwrap();
+        let mut q = SearchQuery::new("rust");
+        q.keyword_weight = 0.0;
+        assert!(matches!(s.search(&q), Err(MemoError::Serialization(_))));
+    }
+
+    #[test]
     fn embedding_serialize_roundtrip() {
         let buf = serialize_embedding(Some(&[0.1, 0.2, 0.3])).unwrap();
         assert_eq!(

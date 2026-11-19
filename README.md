@@ -105,7 +105,7 @@ cargo run -p aria-memo -- add --type working --content "User likes Rust" --impor
 cargo run -p aria-memo -- search --text "Rust" --top-k 5
 ```
 
-`cargo test` passes without Postgres, network, or credentials — everything is local SQLite.
+After the first build, `cargo test` passes without Postgres, network, or credentials — everything is local SQLite. The first build downloads the embedded Japanese/Korean dictionaries via `lindera-ipadic` / `lindera-ko-dic`; prewarm once with `./scripts/prefetch-lindera.sh` and set `LINDERA_BUILD_DICTIONARY_CACHE_DIR` for offline rebuilds. Runtime remains zero-network.
 
 <div align="right">
 
@@ -188,7 +188,7 @@ The default `LocalRelationScorer` is fully local (semantic = cosine, temporal = 
 
 ## 📊 Benchmarks & comparison
 
-Compare against: mem0 / MemOS / MemPalace / Zep / Letta, plus local embedded **control groups** `sqlite_vec` and `chromem` (included by default; skipped with a recorded `reason` when their dependency/binary is missing — never faked).
+Compare against: mem0 / agentmem / Zep / Letta, plus local **control groups** `sqlite_vec`, `chromem` and `agentmem` (included by default; skipped with a recorded `reason` when their dependency/binary is missing — never faked). `agentmem` is driven as a local HTTP service via `AGENTMEM_BIN`.
 
 - Feature matrix: [docs/compare.md](./docs/compare.md)
 - Results guide: [docs/bench_results.md](./docs/bench_results.md)
@@ -344,7 +344,7 @@ All detailed docs live under [`docs/`](./docs):
 
 | Document | What it covers |
 |---|---|
-| [Feature matrix](./docs/compare.md) | memo vs mem0 / MemOS / MemPalace / Zep / Letta + local control groups |
+| [Feature matrix](./docs/compare.md) | memo vs mem0 / agentmem / Zep / Letta + local control groups |
 | [Benchmark results](./docs/bench_results.md) | Track A/B methodology and results |
 | [Benchmark harness](./benches/README.md) | Python orchestration (Track A storage/retrieval + Track B end-to-end) |
 | [Requirements](./requirements.md) | feature boundaries / exceptions / acceptance criteria |

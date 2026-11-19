@@ -23,7 +23,7 @@
     },
     {
       "id": "d6",
-      "content": "Python microbenchmarks live under benches/ and compare mem0 MemOS MemPalace Zep Letta."
+      "content": "Python microbenchmarks live under benches/ and compare mem0 agentmem Zep Letta."
     },
     {
       "id": "d7",

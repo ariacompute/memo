@@ -10,6 +10,15 @@ from typing import Any
 
 from .base import BackendInfo, MemoBackend, SearchHit
 
+VALID_MEMO_TYPES = {
+    "working",
+    "short_term",
+    "long_term:episodic",
+    "long_term:semantic",
+    "long_term:entity",
+    "long_term:graph",
+}
+
 
 def _find_bin() -> str | None:
     env = os.environ.get("ARIA_MEMO_BIN")
@@ -82,6 +91,10 @@ class AriaMemoBackend(MemoBackend):
     def add(self, content: str, metadata: dict[str, Any] | None = None) -> str:
         meta = metadata or {}
         mtype = str(meta.get("memo_type") or meta.get("type") or "working")
+        # Benchmark-specific labels (e.g. HaluMem's "event") are not CLI memo types;
+        # normalize here so the strict CLI contract does not break the harness.
+        if mtype not in VALID_MEMO_TYPES:
+            mtype = "working"
         importance = str(meta.get("importance", 0.5))
         # use the `--content=...` form to avoid content starting with '-' being misparsed as an option by clap
         return self._run(

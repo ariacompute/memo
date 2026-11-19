@@ -1,6 +1,26 @@
 use memo_core::*;
 
-/// Importance decays exponentially by half-life (inspired by MemOS lifecycle management).
+/// Tier-specific half-lives (seconds): Working decays fastest, LongTerm slowest.
+pub const WORKING_HALF_LIFE_SEC: i64 = 60 * 60;
+pub const SHORT_TERM_HALF_LIFE_SEC: i64 = 7 * 24 * 60 * 60;
+pub const LONG_TERM_HALF_LIFE_SEC: i64 = 30 * 24 * 60 * 60;
+
+/// Select the half-life for a memory's tier (requirements §1.1 "分层老化").
+pub fn half_life_for(memo_type: &MemoType) -> i64 {
+    match memo_type {
+        MemoType::Working => WORKING_HALF_LIFE_SEC,
+        MemoType::ShortTerm => SHORT_TERM_HALF_LIFE_SEC,
+        MemoType::LongTerm { .. } => LONG_TERM_HALF_LIFE_SEC,
+    }
+}
+
+/// Decay using the half-life implied by the memory's tier.
+pub fn decay_importance_by_tier(m: &mut Memo, elapsed_sec: i64) {
+    let half_life = half_life_for(&m.memo_type);
+    decay_importance(m, elapsed_sec, half_life);
+}
+
+/// Importance decays exponentially by an explicit half-life (tiered aging is selected by [`decay_importance_by_tier`]).
 pub fn decay_importance(m: &mut Memo, elapsed_sec: i64, half_life_sec: i64) {
     if half_life_sec <= 0 || elapsed_sec <= 0 {
         return;
@@ -127,5 +147,44 @@ mod tests {
         let s = SqliteStore::open(":memory:").unwrap();
         assert_eq!(prune(&s, 0.5).unwrap(), 0);
         assert_eq!(prune(&s, 1.0).unwrap(), 0);
+    }
+
+    fn with_type(id: &str, importance: f32, memo_type: MemoType) -> Memo {
+        let mut m = sample(id, importance);
+        m.memo_type = memo_type;
+        m
+    }
+
+    #[test]
+    fn half_life_for_tiers_is_ordered() {
+        assert_eq!(half_life_for(&MemoType::Working), WORKING_HALF_LIFE_SEC);
+        assert_eq!(
+            half_life_for(&MemoType::ShortTerm),
+            SHORT_TERM_HALF_LIFE_SEC
+        );
+        assert_eq!(
+            half_life_for(&MemoType::LongTerm {
+                kind: LongTermKind::Episodic
+            }),
+            LONG_TERM_HALF_LIFE_SEC
+        );
+        const { assert!(WORKING_HALF_LIFE_SEC < SHORT_TERM_HALF_LIFE_SEC) };
+        const { assert!(SHORT_TERM_HALF_LIFE_SEC < LONG_TERM_HALF_LIFE_SEC) };
+    }
+
+    #[test]
+    fn decay_by_tier_uses_tier_half_life() {
+        let mut working = with_type("w", 1.0, MemoType::Working);
+        let mut long_term = with_type(
+            "l",
+            1.0,
+            MemoType::LongTerm {
+                kind: LongTermKind::Episodic,
+            },
+        );
+        decay_importance_by_tier(&mut working, WORKING_HALF_LIFE_SEC);
+        decay_importance_by_tier(&mut long_term, WORKING_HALF_LIFE_SEC);
+        assert!((working.importance - 0.5).abs() < 1e-6);
+        assert!(long_term.importance > 0.99);
     }
 }

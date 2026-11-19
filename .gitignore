@@ -31,3 +31,6 @@ benches/data/halumem/
 benches/data/longmemeval/
 benches/data/personamem/
 benches/results/
+
+# Lindera dictionary build cache (prefetch via scripts/prefetch-lindera.sh)
+.lindera-dict-cache/

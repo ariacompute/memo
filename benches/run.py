@@ -16,24 +16,27 @@ from track_b import BENCHMARKS, dry_run, run_track_b  # noqa: E402
 from adapters import build_backend  # noqa: E402
 from judge import Judge  # noqa: E402
 
-DEFAULT_SYSTEMS = "aria,sqlite_vec,chromem,mem0,memos,mempalace,zep,letta"
+DEFAULT_SYSTEMS = "aria,sqlite_vec,chromem,agentmem,mem0,zep,letta"
+DEFAULT_SIZES = "1000,10000,100000"
 
 
 def parse_csv(raw: str) -> list[str]:
     return [x.strip() for x in raw.split(",") if x.strip()]
 
 
-def main() -> int:
+def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(description="aria-memo industry benches (Track A + B)")
     p.add_argument("--track", choices=("a", "b", "all"), default="a")
-    p.add_argument("--systems", default="aria", help=f"comma list; full set: {DEFAULT_SYSTEMS}")
+    p.add_argument("--systems", default=DEFAULT_SYSTEMS, help=f"comma list; full set: {DEFAULT_SYSTEMS}")
     p.add_argument("--backend", default=os.environ.get("BENCH_BACKEND", "aria"),
                    help="Track B single backend (default: aria)")
-    p.add_argument("--size", type=int, default=1000, help="Track A corpus size (single-size fallback)")
+    p.add_argument(
+        "--size", type=int, default=1000, help="single-size fallback used when --sizes is empty"
+    )
     p.add_argument(
         "--sizes",
-        default=None,
-        help="Track A corpus sizes to sweep, comma-separated (default: 1000,10000,100000)",
+        default=DEFAULT_SIZES,
+        help=f"Track A corpus sizes to sweep, comma-separated (default: {DEFAULT_SIZES})",
     )
     p.add_argument("--top-k", type=int, default=5)
     p.add_argument(
@@ -61,7 +64,11 @@ def main() -> int:
         default="",
         help="output directory (default benches/results/<timestamp>)",
     )
-    args = p.parse_args()
+    return p
+
+
+def main() -> int:
+    args = build_parser().parse_args()
 
     systems = parse_csv(args.systems)
     out = Path(args.out) if args.out else ROOT / "results" / utc_stamp()

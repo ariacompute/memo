@@ -275,6 +275,7 @@ def run_retrieval_quality(
         "generated_at": utc_stamp(),
         "dataset": dataset,
         "source": ds.get("source", dataset),
+        "dataset_source": ds.get("dataset_source"),
         "systems": rows,
     }
 

@@ -12,14 +12,33 @@ concurrency:
 permissions:
   contents: read
 
+env:
+  LINDERA_BUILD_DICTIONARY_CACHE_DIR: ${{ github.workspace }}/.lindera-dict-cache
+
 jobs:
   test:
-    name: fmt + clippy + test
+    name: fmt + clippy + test + python
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Cache Lindera dictionaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LINDERA_BUILD_DICTIONARY_CACHE_DIR }}
+          key: lindera-dicts-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install bench dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r benches/requirements.txt
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -37,3 +56,6 @@ jobs:
 
       - name: Tests
         run: cargo test --locked --workspace
+
+      - name: Python tests
+        run: python -m unittest discover -s benches/tests -t benches

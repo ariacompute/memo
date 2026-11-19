@@ -5,3 +5,5 @@ sqlite-vec
 # outbound TLS (datasets download, LLM judge API) via urllib3/requests; certifi's
 # bundled CA store must be a post-emSign-removal release.
 certifi
+# Optional test runner; unittest discovery needs no extra package, pytest is supported too.
+pytest>=8

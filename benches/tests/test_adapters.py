@@ -3,10 +3,12 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from adapters import build_backend
+from adapters.aria_memo import AriaMemoBackend
 from adapters.base import BackendInfo, MemoBackend, UnsupportedCapability
 from adapters.skip import SkipBackend
 
@@ -64,6 +66,28 @@ class TestControlAdapters(unittest.TestCase):
     def test_control_adapters_registered(self):
         self.assertIsNotNone(build_backend("sqlite_vec"))
         self.assertIsNotNone(build_backend("chromem"))
+
+    def test_agentmem_registered(self):
+        self.assertEqual(build_backend("agentmem").info().name, "agentmem")
+
+    def test_removed_systems_skip_with_reason(self):
+        for name in ("memos", "mempalace"):
+            backend = build_backend(name)
+            self.assertIsInstance(backend, SkipBackend)
+            self.assertFalse(backend.info().available)
+            self.assertIn("unknown system", backend.info().reason)
+
+
+class TestAriaMemoAdapter(unittest.TestCase):
+    def test_benchmark_type_labels_are_normalized(self):
+        backend = AriaMemoBackend(bin_path="unused")
+        with mock.patch.object(backend, "_run", return_value="doc1") as run:
+            self.assertEqual(backend.add("x", {"memo_type": "event"}), "doc1")
+        self.assertEqual(run.call_args.args[:3], ("add", "--type", "working"))
+
+        with mock.patch.object(backend, "_run", return_value="doc2") as run:
+            backend.add("y", {"memo_type": "long_term:semantic"})
+        self.assertEqual(run.call_args.args[:3], ("add", "--type", "long_term:semantic"))
 
 
 if __name__ == "__main__":

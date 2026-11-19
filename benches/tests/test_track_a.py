@@ -64,6 +64,16 @@ class TestA2Variance(unittest.TestCase):
         self.assertIsNotNone(ds)
         assert ds is not None
         self.assertGreater(len(ds["queries"]), 0)
+        self.assertIn(ds["dataset_source"], ("real", "fixture"))
+        self.assertTrue(ds["corpus"])
+
+    def test_track_b_halumem_loads(self):
+        ds = a2_datasets.load_dataset("track_b:halumem")
+        self.assertIsNotNone(ds)
+        assert ds is not None
+        self.assertGreater(len(ds["queries"]), 0)
+        self.assertIn(ds["dataset_source"], ("real", "fixture"))
+        self.assertTrue(ds["corpus"])
 
     def test_retrieval_quality_reports_variance(self):
         b = FakeBackend()

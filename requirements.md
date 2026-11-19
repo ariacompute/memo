@@ -11,7 +11,7 @@
 - 持久化：嵌入式 SQLite（rusqlite bundled），自动建表/迁移/索引、批量写入。
 - 检索：两条入口 —— `search` 为语义（向量余弦）+ 词法（FTS5 `bm25()`）**混合**打分（支持 top-k 与阈值；词法命中经 FTS5 候选下推，仅对候选集做内存精排，否则全表扫描保语义召回）；`recall` 为**纯向量（余弦-only）**召回，按 query 与记忆的余弦相似度排序（keyword 权重为 0）。批量入口 `search_batch`/`recall_batch`：一次持锁对多个 query 评分（见 §2.3）。
 - 记忆管理：`consolidate`（巩固：提升重要性/合并）、`dedup`（去重：相似度阈值合并）。
-- 生命周期：分层老化、重要性衰减、遗忘（默认硬删除，预留软删除标记）。
+- 生命周期：分层老化（Working 1h / ShortTerm 7d / LongTerm 30d 半衰期，`decay_importance_by_tier`）、重要性衰减、遗忘（默认硬删除，预留软删除标记）。
 - 统一错误 `MemoError`；可选 CLI（add/get/search/list/forget）。
 - 全部新增功能同步单测，核心逻辑覆盖正常 + 异常路径。
 
@@ -52,7 +52,7 @@ Jev-Mem 启发的结构化多关系记忆层，叠加在扁平 `MemoStore` 之�
 - 韩语（ko）：`lindera` + 内嵌 `ko-dic` 词典（形态切分，召回质量高）。
 - 空格型语言（en / es / fr / de / it / ru / pt / ar / hi）：沿用 `memories_fts` 默认 `unicode61` 空白切分（拉丁/西里尔/阿拉伯/天城文按词天然以空格分隔）。
 
-实现：`fts5_index_text` 与 `fts5_match_expr` 共用 `segment(text)`（按 Unicode script 路由），写入侧空格拼接、查询侧逐词加引号 `OR` 连接；`is_index_term` 丢弃纯标点/空白 run。`jieba-rs` / `lindera` 分词器以进程级 `OnceLock` 单例持有，词典仅加载一次。依赖 `lindera` / `lindera-dictionary` / `lindera-ipadic` / `lindera-ko-dic`，词典内嵌（构建期与运行期均零网络下载）；代价是二进制体积更大。已有数据库的 FTS 索引在 `migrate` 时通过 `user_version`（3 → 4）一次性重建以用上新分词 token。
+实现：`fts5_index_text` 与 `fts5_match_expr` 共用 `segment(text)`（按 Unicode script 路由），写入侧空格拼接、查询侧逐词加引号 `OR` 连接；`is_index_term` 丢弃纯标点/空白 run。`jieba-rs` / `lindera` 分词器以进程级 `OnceLock` 单例持有，词典仅加载一次。依赖 `lindera` / `lindera-dictionary` / `lindera-ipadic` / `lindera-ko-dic`，词典运行期内嵌（运行期零网络下载）；构建期 `lindera-ipadic` / `lindera-ko-dic` 的 build script 会从 Lindera.dev 拉取原始词典包（约 12.9 MB + 49.7 MB），可用 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` 复用缓存（首次冷缓存仍需联网）；代价是二进制体积更大。已有数据库的 FTS 索引在 `migrate` 时通过 `user_version`（3 → 4）一次性重建以用上新分词 token。
 
 ## 2. API
 
@@ -292,7 +292,7 @@ pub fn graph_bfs(
 
 ## 6. 业界对比与评测（M2）
 
-> 对比系统固定为：mem0 / MemOS / MemPalace / Zep / Letta。
+> 对比系统固定为：mem0 / agentmem / Zep / Letta；另含本地控制组 `sqlite_vec` / `chromem`。
 > 工程约定：评测编排与适配器一律放在 `benches/`（Python），**不**新增 `crates/bench`。
 
 ### 6.1 评测分层
@@ -308,7 +308,7 @@ pub fn graph_bfs(
 
 - 文档：`docs/compare.md`。
 - 维度至少含：三层记忆、类型（episodic/semantic/entity/graph）、CRUD、混合检索、巩固/去重/遗忘、写路径是否依赖 LLM、嵌入是否可离线、持久化、多端同步、图记忆、多模态、语言/运行时、边缘/移动就绪。
-- 每格：`✅` / `⚠️` / `❌` + 一句依据；aria 与五系统均须填满。
+- 每格：`✅` / `⚠️` / `❌` + 一句依据；aria 与其余四系统均须填满。
 
 ### 6.3 Track A — 微基准与检索质量
 
@@ -317,12 +317,12 @@ pub fn graph_bfs(
 - 规模：**多尺寸 sweep** `1k` / `10k` / `100k`（CLI `--sizes`，默认 `1000,10000,100000`）；`search` top-k ∈ {5, 10}。
 - 扩展曲线：对每个 size 测 `add` / `search` 的 p50 / p99（ms）与吞吐（ops/s），跨尺寸计算 **p99 增长因子**（`p99@10k / p99@1k`、`p99@100k / p99@10k`），报告亚线性判定（增长因子 < 尺寸倍率即亚线性）。
 - 写长尾压测：aria CLI `bench` 新增 `--wal` / `--batch-embed` / `--bulk`，分别报告 `add_baseline`（默认 journal + 逐条嵌入+事务）、`add_wal`（WAL 模式）、`add_batch_embed`（`add_batch` 批量嵌入+事务合并）、`add_bulk`（逐条嵌入+`add_batch` 事务合并）的 p50/p99/ops，观察 add p99 是否收敛。
-- 本地控制组：**`sqlite_vec`**（pip `sqlite-vec`，本地 SQLite 向量索引 + 离线哈希-n-gram 嵌入）与 **`chromem`**（chromem-go 二进制子进程，离线）纳入默认 `--systems`，缺依赖/二进制时 skip 并写 `reason`，让对比矩阵有真实数值。
+- 本地控制组：**`sqlite_vec`**（pip `sqlite-vec`，本地 SQLite 向量索引 + 离线哈希-n-gram 嵌入）与 **`chromem`**（chromem-go 二进制子进程，离线）纳入默认 `--systems`，缺依赖/二进制时 skip 并写 `reason`，让对比矩阵有真实数值；`agentmem` 同为默认本地控制组（Go HTTP 服务，`AGENTMEM_BIN`，查询前重建 memory 投影），缺二进制时 skip。
 - 他系统：经 `benches/adapters/*` 调用；缺依赖/密钥时 skip 并写入报告原因，不得静默失败。
 
 **A2 合成检索质量**
 
-- 查询集 ≥50–100 条、贴近真实分布：`synthetic_retrieval.json`（小，~8 条）+ `synthetic_retrieval_v2.json`（新增，84 条：关键词/同义改写/干扰项混合）；并支持复用 **Track B 真实数据集**作为查询语料（`--a2-dataset track_b:locomo_refined` / `track_b:halumem`，证据/记忆点作相关文档）。
+- 查询集 ≥50–100 条、贴近真实分布：`synthetic_retrieval.json`（小，~8 条）+ `synthetic_retrieval_v2.json`（新增，84 条：关键词/同义改写/干扰项混合）；并支持复用 **Track B 真实数据集**作为查询语料（`--a2-dataset track_b:locomo_refined` / `track_b:halumem`，证据/记忆点作相关文档；真实数据缺失时回退 fixture 并在报告标 `dataset_source`）。
 - 指标：**Recall@k、MRR 与各自方差（样本标准差）**；`run_retrieval_quality` 输出 `recall_at_k` / `recall_at_k_std` / `mrr` / `mrr_std` / `n_queries`，给出有统计意义的检索质量。
 
 ### 6.4 Track B — 端到端质量（四基准注册表）
@@ -350,7 +350,7 @@ benches/
   metrics/            # f1 / bleu / 多选 / recall@k / mean_std 等离线指标
   judge.py            # OpenAI 兼容 judge 客户端（可选）
   datasets.py         # 数据集定位与下载
-  adapters/           # aria / sqlite_vec / chromem / mem0 / memos / mempalace / zep / letta
+  adapters/           # aria / sqlite_vec / chromem / agentmem / mem0 / zep / letta
   data/               # synthetic_retrieval.json + synthetic_retrieval_v2.json；fixtures/ 各基准极小合成样例
   tests/              # Python 单测（离线、零网络、零真实 LLM）
   results/            # 生成结果（样例可入库，大体量 gitignore）

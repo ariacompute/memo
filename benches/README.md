@@ -7,7 +7,7 @@
 | **A** | 微基准（延迟/吞吐）+ 合成检索 Recall@k / MRR | `aria-memo` CLI；他系统按 SDK |
 | **B** | 四基准端到端：locomo_refined / halumem / longmemeval / personamem | 离线指标零网络；judge 指标需 OpenAI 兼容 LLM（缺则 skip） |
 
-对比系统（默认 `--systems`）：`aria` / `sqlite_vec` / `chromem` / `mem0` / `memos` / `mempalace` / `zep` / `letta`。其中 `sqlite_vec`、`chromem` 为**本地嵌入式控制组**（默认纳入，缺依赖/二进制时自动 skip）。
+对比系统（默认 `--systems`）：`aria` / `sqlite_vec` / `chromem` / `agentmem` / `mem0` / `zep` / `letta`。其中 `sqlite_vec`、`chromem`、`agentmem` 为**本地控制组**（默认纳入，缺依赖/二进制时自动 skip）。`--sizes` 默认 `1000,10000,100000`；需要单尺寸时用 `--sizes 1000`（空字符串配合 `--size` 亦可）。
 
 > Track A 扩展（M6）：多尺寸扩展曲线、本地控制组、A2 大查询集 + 方差、写长尾压测。详见下。
 
@@ -20,7 +20,7 @@
 | longmemeval | longmemeval_{s,m,oracle}.json | 检索 Recall@5 | QA 准确率 |
 | personamem | questions_{32k,128k,1M}.csv + shared_contexts_*.jsonl | 多选准确率（完全离线） | — |
 
-**judge 可选红线**：所有依赖 LLM 判定的指标仅在配置了 `BENCH_LLM_API_KEY`（或 `OPENAI_API_KEY`）+ `BENCH_LLM_BASE_URL`/`BENCH_LLM_MODEL` 时计算；否则该指标 `skipped` 并写 `reason`，**不伪造分数**。离线指标（F1/BLEU/多选/Recall@k）在无数据集/无 LLM 时经 `data/fixtures/` 内置合成样例仍可跑通单测与冒烟。
+**judge 可选红线**：所有依赖 LLM 判定的指标仅在配置了 `BENCH_LLM_API_KEY`（或 `OPENAI_API_KEY`）+ `BENCH_LLM_BASE_URL`/`BENCH_LLM_MODEL` 时计算；否则该指标 `skipped` 并写 `reason`，**不伪造分数**。离线指标（F1/BLEU/多选/Recall@k）在无数据集/无 LLM 时经 `data/fixtures/` 内置合成样例仍可跑通单测与冒烟。A2 复用 `track_b:*` 语料时同样遵循“真实数据优先 / fixture 回退”，报告以 `dataset_source` 标注 `real` 或 `fixture`。
 
 ## 安装
 
@@ -28,7 +28,7 @@
 # 仓库根目录
 cargo build -p aria-memo --release
 pip install -r benches/requirements.txt
-export ARIA_MEMORY_BIN="$(pwd)/target/release/aria-memo"   # 可选
+export ARIA_MEMO_BIN="$(pwd)/target/release/aria-memo"   # 可选
 ```
 
 ## 运行
@@ -36,32 +36,32 @@ export ARIA_MEMORY_BIN="$(pwd)/target/release/aria-memo"   # 可选
 ```bash
 # Track A：多尺寸扩展曲线（默认 1k/10k/100k）+ A2 大查询集方差
 python benches/run.py --track a --sizes 1000,10000,100000 --systems aria,sqlite_vec,chromem
-python benches/run.py --track a --size 1000 --a2-dataset synthetic_v2
+python benches/run.py --track a --sizes 1000 --a2-dataset synthetic_v2
 python benches/run.py --track a --a2-dataset track_b:locomo_refined
 python benches/run.py --track a --a2-dataset track_b:halumem
 
 # 写长尾压测（aria 进程内 bench；需先 cargo build -p aria-memo --release）
 aria-memo bench --size 10000 --top-k 5 --wal --batch-embed --bulk --json
 
-python benches/run.py --track a --size 1000 --systems aria,mem0,memos,mempalace,zep,letta
+python benches/run.py --track a --sizes 1000 --systems aria,agentmem,mem0,zep,letta
 python benches/run.py --track b --dry-run
 python benches/run.py --track b --benchmarks locomo_refined,halumem,longmemeval,personamem --backend aria
 python benches/run.py --track b --download            # 自动拉取缺失数据集
 python benches/run.py --track b --limit 50            # 采样上限，避免大集跑爆内存
 python benches/run.py --track b --judge-model gpt-4o-mini   # 显式指定 judge 模型
-python benches/run.py --track all --size 500 --dry-run
+python benches/run.py --track all --sizes 500 --dry-run
 ```
 
 环境变量（Track B / 他系统）：
 
 | 变量 | 用途 |
 |------|------|
-| `ARIA_MEMORY_BIN` | aria-memo 可执行文件路径 |
+| `ARIA_MEMO_BIN` | aria-memo 可执行文件路径 |
 | `BENCH_LLM_API_KEY` / `OPENAI_API_KEY` | judge LLM 凭据（Track B judge 指标） |
 | `BENCH_LLM_BASE_URL` | OpenAI 兼容 base url（默认官方） |
 | `BENCH_LLM_MODEL` / `--judge-model` | judge 模型名（报告标注实际模型） |
 | `MEM0_API_KEY` | mem0 托管 |
-| `MEMOS_*` | MemOS |
+| `AGENTMEM_BIN` | 本地 agentmem 可执行文件路径（缺则 skip；用 `go build -o bin/agentmem ./cmd/agentmem` 构建） |
 | `ZEP_API_KEY` | Zep |
 | `LETTA_*` | Letta |
 | `CHROMEM_BIN` | chromem-go 可执行文件路径（控制组；缺则 skip） |
@@ -81,7 +81,7 @@ benches/
   metrics/         # 离线指标：F1 / BLEU / 多选 / Recall@k
   judge.py         # OpenAI 兼容 judge 客户端（可选）
   datasets.py      # 数据集定位与下载
-  adapters/        # 统一 MemoBackend 接口；aria / sqlite_vec / chromem / mem0 / memos / mempalace / zep / letta
+  adapters/        # 统一 MemoBackend 接口；aria / sqlite_vec / chromem / agentmem / mem0 / zep / letta
   track_a/         # 微基准 + 合成检索
     datasets.py    # A2 查询集加载（synthetic / synthetic_v2 / track_b:*）
   track_b/         # 四基准注册表（locomo_refined/halumem/longmemeval/personamem）

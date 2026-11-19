@@ -8,6 +8,7 @@ on:
 env:
   CARGO_TERM_COLOR: always
   BIN_NAME: aria-memo
+  LINDERA_BUILD_DICTIONARY_CACHE_DIR: ${{ github.workspace }}/.lindera-dict-cache
 
 jobs:
   build:
@@ -37,6 +38,12 @@ jobs:
             archive: tar.gz
     steps:
       - uses: actions/checkout@v4
+
+      - name: Cache Lindera dictionaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.LINDERA_BUILD_DICTIONARY_CACHE_DIR }}
+          key: lindera-dicts-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
 
       - uses: dtolnay/rust-toolchain@stable
         with:

@@ -19,7 +19,7 @@
 
 ## M2 — 业界功能/性能评测（A + B）
 
-> 对比系统：mem0 / MemOS / MemPalace / Zep / Letta。编排工程：`benches/`（Python），不采用 `crates/bench`。
+> 对比系统：mem0 / agentmem / Zep / Letta；本地控制组 `sqlite_vec` / `chromem` / `agentmem`。编排工程：`benches/`（Python），不采用 `crates/bench`。
 
 10. [x] `requirements.md` §6 增补 Track A/B、矩阵、验收；本清单同步
 11. [x] `docs/compare.md` 功能对比矩阵（aria + 五系统）
@@ -29,23 +29,25 @@
 15. [x] Track B：LoCoMo / LongMemEval / BEAM runner 骨架 + dry-run；五系统 adapter 接口齐全
 16. [x] 文档：`benches/README.md`、`docs/bench_results.md`、根 README / AGENTS 链到评测
 
-## M3 — Track B 四基准真实评测管线（当前进行中）
+## M3 — Track B 四基准真实评测管线（已落地）
 
 > 需求：基于 LoCoMo-Refined / HaluMem / LongMemEval / PersonaMem 进行 memo 评测。
 > 已澄清：移除 beam + 旧 locomo；完整管线（loader+检索+离线指标真跑，judge 可选）；下载脚本+fixture；扩展 HaluMem 操作级能力并同步 CLI。
 
-17. [ ] `requirements.md` §1.2b/§2.4/§6.4/§6.5/§6.7 已更新（本步：规格先行，已落）
-18. [ ] CLI 增补：`update` 子命令 + `list --json` / `search --json`；保留默认人类可读输出；`commands.rs` 新增正常+异常单测
-19. [ ] `benches/metrics/`：token_f1 / bleu / multiple_choice_accuracy / recall_at_k / mrr（纯标准库，单测）
-20. [ ] `benches/judge.py`：OpenAI 兼容 judge 客户端，`from_env()` 无凭据返回 None；严格判定 prompt；超时/重试；记录模型名与计数
-21. [ ] `benches/datasets.py`：`DATASET_SPECS` + `resolve_dataset`（真实优先/fixture 回退，标 dataset_source）+ `download`（urllib，失败打印手动指引）
-22. [ ] 四基准 fixture（极小合成，结构同上游）：`lococo_refined` / `halumem` / `longmemeval` / `personamem`
-23. [ ] 重构 `track_b/` 为注册表：`BENCHMARKS`=四基准；每基准子包导出 `NAME`/`DATASET_FILES`/`load`/`run`；`run_track_b` 分派+聚合+报告（保留顶层展平 systems）
-24. [ ] `adapters/base.py` 扩展可选能力 `list_memories`/`update`+`UnsupportedCapability`；`aria_memo.py` 对接 CLI 新能力；其余系统默认降级
-25. [ ] `benches/tests/`：`test_metrics` / `test_loaders` / `test_track_b`（fake backend+fake judge 端到端，judge=None 时 skip）/ `test_adapters`（降级）/ `test_datasets`
-26. [ ] `run.py`：`--benchmarks` 默认四基准、移除 beam；新增 `--download` / `--limit` / `--judge-model`；汇总打印
-27. [ ] 文档同步：`benches/README.md` / `data/README.md` / `docs/compare.md` / `docs/bench_results.md` / `AGENTS.md`
-28. [ ] 验收：`cargo test` + `cargo clippy --all-targets` 全绿；`python -m pytest benches/` 离线全绿；`run.py --bench locomo_refined --ingest-only` 等可跑
+17. [x] `requirements.md` §1.2b/§2.4/§6.4/§6.5/§6.7 已更新（本步：规格先行，已落）
+18. [x] CLI 增补：`update` 子命令 + `list --json` / `search --json`；保留默认人类可读输出；`commands.rs` 新增正常+异常单测
+19. [x] `benches/metrics/`：token_f1 / bleu / multiple_choice_accuracy / recall_at_k / mrr（纯标准库，单测）
+20. [x] `benches/judge.py`：OpenAI 兼容 judge 客户端，`from_env()` 无凭据返回 None；严格判定 prompt；超时/重试；记录模型名与计数
+21. [x] `benches/datasets.py`：`DATASET_SPECS` + `resolve_dataset`（真实优先/fixture 回退，标 dataset_source）+ `download`（urllib，失败打印手动指引）
+22. [x] 四基准 fixture（极小合成，结构同上游）：`lococo_refined` / `halumem` / `longmemeval` / `personamem`
+23. [x] 重构 `track_b/` 为注册表：`BENCHMARKS`=四基准；每基准子包导出 `NAME`/`DATASET_FILES`/`load`/`run`；`run_track_b` 分派+聚合+报告（保留顶层展平 systems）
+24. [x] `adapters/base.py` 扩展可选能力 `list_memories`/`update`+`UnsupportedCapability`；`aria_memo.py` 对接 CLI 新能力；其余系统默认降级
+25. [x] `benches/tests/`：`test_metrics` / `test_loaders` / `test_track_b`（fake backend+fake judge 端到端，judge=None 时 skip）/ `test_adapters`（降级）/ `test_datasets`
+26. [x] `run.py`：`--benchmarks` 默认四基准、移除 beam；新增 `--download` / `--limit` / `--judge-model`；汇总打印
+27. [x] 文档同步：`benches/README.md` / `data/README.md` / `docs/compare.md` / `docs/bench_results.md` / `AGENTS.md`
+28. [x] 验收：`cargo test` + `cargo clippy --all-targets` 全绿；`python -m unittest discover -s benches/tests -t benches` 与 `python -m pytest benches/tests` 离线全绿；`run.py --track b --benchmarks locomo_refined --ingest-only` 等可跑
+
+**已知限制**：MemOS / MemPalace adapter 已移除（永久 stub，无法出数）；本地控制组 `agentmem` 需自行构建 Go 二进制并设置 `AGENTMEM_BIN`，其 adapter 通过本机 HTTP 服务接入并在查询前执行 `canonical_to_rag` 投影；云服务（mem0 / Zep / Letta）仍依赖密钥，缺凭据 skip + reason。
 
 ## M4 — 多关系记忆平面（Jev-Mem 启发，已落地）
 
@@ -125,12 +127,25 @@
 62. [x] memo：预置 embedding 的 search/recall/批量路径、dedup 维度不一致、`token_jaccard` 空 token、scorer 无 embedding 回退、temporal 反向边、`MemStore` 关系排序/过滤
 63. [x] CLI 接缝重构（对外参数/输出/退出码不变）：`upgrade` 增 `HttpGet` 注入（覆盖 2xx/非 2xx/坏 JSON、zip/tar.gz/未知扩展、安装缺失/改名回退、版本相同提前返回）；`setup` 增 `Prompter` 注入（TTY 1/2/空/非法、非 TTY 三级回退、status 有/无）；`config` 抽 `resolve_memo_home` 纯函数；`main` 抽 `entry(args)->i32` 并逐子命令补测
 64. [x] 死分支清理：删除可证明不可达的守卫与重复校验（如 `lindera_tokens` 的错误映射改为 `unwrap_or_default()`），不引入 `#[coverage(off)]`；真实 stdin/stdout 与网络出口保留为薄包装
-65. [x] 新增 `.github/workflows/ci.yml`：push(main)/PR 触发 → `cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace`；不安装 llvm-cov、不设覆盖率阈值
-66. [x] 验收：`cargo llvm-cov --workspace --summary-only` → Lines 6025/6025 = 100.00%（missed 0）、Functions 603/603 = 100.00%（missed 0）；Regions 97.73%（不作门禁）；CI 三条命令本地全绿
+65. [x] 新增 `.github/workflows/ci.yml`：push(main)/PR 触发 → `cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace` → `python -m unittest discover -s benches/tests -t benches`；ci/release 另配 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` + `actions/cache`；不设覆盖率阈值
+66. [x] 验收（`cargo llvm-cov 0.9.1` 实测，先用 `scripts/prefetch-lindera.sh` 预热缓存）：Lines 6067/6067 = 100.00%（missed 0）、Functions 631/631 = 100.00%（missed 0）；Regions 7848 total / 191 missed = 97.57%（不作门禁）；Rust 与 Python 门禁本地全绿
 
 ### M8
-- 覆盖率仅本地自查：`cargo llvm-cov clean --workspace && cargo llvm-cov --workspace --summary-only`（先 clean，避免旧 profdata 串味）。
+- 覆盖率仅本地自查：`LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov clean --workspace && LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov --workspace --summary-only --show-missing-lines`（先 clean，避免旧 profdata 串味；缓存由 `scripts/prefetch-lindera.sh` 预热）。
 - 测试离线、可并行：环境变量改动走 crate 级 `env_lock()`，临时目录以 `process::id()` 命名，SQLite 优先 `:memory:`。
+
+## 本轮修复 — 完整度评估 §6 第 1–10 项（已完成）
+
+1. [x] `python -m unittest discover -s benches/tests -t benches` 接入 CI；`pytest` 加入 `benches/requirements.txt`。
+2. [x] `track_a/datasets.py` 复用 `resolve_dataset`，适配 LoCoMo / HaluMem 的 fixture schema，A2 报告标 `dataset_source`，永久红灯消除。
+3. [x] `run.py --sizes` 默认 `1000,10000,100000`，`--systems` 默认 `DEFAULT_SYSTEMS`，README / bench_results 同步。
+4. [x] 文档环境变量名 `ARIA_MEMORY_BIN` → `ARIA_MEMO_BIN`（3 处）。
+5. [x] ci/release 配置 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` + `actions/cache`；新增 `scripts/prefetch-lindera.sh`；构建期网络承诺改为如实描述。
+6. [x] 补 `search` 损坏 metadata 行在 FTS 候选/全表两路径的 `Serialization` 用例；覆盖率声明改为实测 Lines/Functions 100%、Regions 97.57%。
+7. [x] task.md M3 17–28 勾选并补「已知限制」（MemOS/MemPalace 移除、agentmem 需 `AGENTMEM_BIN`）。
+8. [x] `benches/tests/__init__.py` 支持 unittest discover 与 pytest 两种发现方式。
+9. [x] 移除 MemOS / MemPalace adapter 与全部文档引用；新增本地 HTTP `agentmem` adapter（含单测与真实二进制冒烟）。
+10. [x] `add --type` 严格报错；新增 Working/ShortTerm/LongTerm 半衰期策略；`graph_bfs` 修正为真实 best-score 语义并补多路径用例。
 
 ## eMudhra / emSign 证书私钥泄露响应（2026-10）
 

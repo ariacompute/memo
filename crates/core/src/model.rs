@@ -350,11 +350,14 @@ pub struct GraphRetrieveResult {
 /// `(to_id, score, kind)` for a node.
 pub type NeighborFn<'a> = dyn FnMut(&MemoId) -> Vec<(MemoId, f32, RelationKind)> + 'a;
 
-/// Generic bounded graph traversal (BFS with cycle avoidance) shared by every
-/// backend. `neighbor_fn` returns outgoing edges `(to_id, score, kind)` for a node;
-/// the caller filters by `views`, caps visited nodes at `budget`, and decays the
-/// accumulated score by 0.9 per hop. Returns reached `(id, score)` pairs plus a
-/// human-readable stop reason.
+/// Generic bounded graph traversal (BFS) shared by every backend.
+///
+/// `neighbor_fn` returns outgoing edges `(to_id, score, kind)` for a node; the caller filters by
+/// `views`, caps distinct nodes at `budget`, and decays the accumulated score by 0.9 per hop.
+/// `best` keeps the highest score seen for each node: a node is re-queued only when a better path
+/// is found, and stale queued entries with a lower score are skipped. Scores are strictly
+/// improving, so cycles terminate; first discovery includes zero-weight edges. Returns reached
+/// `(id, best_score)` pairs plus a human-readable stop reason.
 pub fn graph_bfs(
     seeds: &[MemoId],
     views: &[RelationKind],
@@ -362,15 +365,14 @@ pub fn graph_bfs(
     max_hops: usize,
     neighbor_fn: &mut NeighborFn<'_>,
 ) -> (Vec<(MemoId, f32)>, String) {
-    use std::collections::{HashMap, HashSet, VecDeque};
+    use std::collections::{HashMap, VecDeque};
 
     let view_set: Option<&[RelationKind]> = if views.is_empty() { None } else { Some(views) };
     let mut best: HashMap<MemoId, f32> = HashMap::new();
-    let mut visited: HashSet<MemoId> = HashSet::new();
     let mut queue: VecDeque<(MemoId, usize, f32)> = VecDeque::new();
 
     for s in seeds {
-        if visited.insert(s.clone()) {
+        if !best.contains_key(s) {
             best.insert(s.clone(), 1.0);
             queue.push_back((s.clone(), 0, 1.0));
         }
@@ -381,6 +383,9 @@ pub fn graph_bfs(
         if hop >= max_hops {
             continue;
         }
+        if acc < best[&node] {
+            continue;
+        }
         let edges = neighbor_fn(&node);
         for (nid, escore, kind) in edges {
             if let Some(vs) = view_set {
@@ -388,19 +393,17 @@ pub fn graph_bfs(
                     continue;
                 }
             }
-            if visited.contains(&nid) {
-                continue;
+            let nacc = acc * escore * 0.9;
+            if let Some(previous) = best.get(&nid) {
+                if nacc <= *previous {
+                    continue;
+                }
             }
-            if visited.len() >= budget {
+            if best.len() >= budget {
                 stop = "budget".to_string();
                 break;
             }
-            let nacc = acc * escore * 0.9;
-            visited.insert(nid.clone());
-            let e = best.entry(nid.clone()).or_insert(0.0);
-            if nacc > *e {
-                *e = nacc;
-            }
+            best.insert(nid.clone(), nacc);
             queue.push_back((nid, hop + 1, nacc));
         }
         if stop == "budget" {
@@ -857,7 +860,7 @@ mod relation_tests {
         assert!(ids.contains(&&"a".to_string()));
         assert!(ids.contains(&&"b".to_string()));
         assert!(ids.contains(&&"c".to_string()));
-        // Cycle must not cause infinite expansion; visited dedupes a.
+        // Cycle must not cause infinite expansion; the best-score map skips the lower path back to a.
         assert!(stop == "exhausted" || stop == "budget");
         // Seed keeps highest score.
         assert_eq!(out[0].0, "a");
@@ -885,6 +888,32 @@ mod relation_tests {
         let ids: Vec<&MemoId> = out.iter().map(|(id, _)| id).collect();
         assert_eq!(ids, vec!["a", "b", "c"]);
         assert_eq!(stop, "exhausted");
+    }
+
+    #[test]
+    fn graph_bfs_keeps_best_score_across_paths() {
+        // a -> c -> b (0.81) beats the direct a -> b (0.18); the stale direct
+        // queue entry must not overwrite the improved score.
+        let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
+            let mut m = HashMap::new();
+            m.insert(
+                "a".into(),
+                vec![
+                    ("c".into(), 1.0, RelationKind::Semantic),
+                    ("b".into(), 0.2, RelationKind::Semantic),
+                ],
+            );
+            m.insert("c".into(), vec![("b".into(), 1.0, RelationKind::Semantic)]);
+            m
+        };
+        let (out, stop) = graph_bfs(&["a".into()], &[], 10, 3, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
+        assert_eq!(stop, "exhausted");
+        let b = out.iter().find(|(id, _)| id == "b").unwrap();
+        assert!((b.1 - 0.81).abs() < 1e-6, "b score = {}", b.1);
+        let c = out.iter().find(|(id, _)| id == "c").unwrap();
+        assert!((c.1 - 0.9).abs() < 1e-6, "c score = {}", c.1);
     }
 
     #[test]

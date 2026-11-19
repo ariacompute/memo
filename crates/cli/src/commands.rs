@@ -6,24 +6,15 @@ use memo_core::{
 use std::collections::HashMap;
 use std::str::FromStr;
 
-/// Add a memory and return its id. An unknown memo_type falls back to `working`
-/// (type schema differences must not break the evaluation pipeline).
+/// Add a memory and return its id. Unknown `memo_type` values are rejected with
+/// `MemoError::InvalidParam`, matching `update` and the core `MemoType` parser.
 pub fn add(
     manager: &MemoManager,
     mem_type: &str,
     content: &str,
     importance: f32,
 ) -> Result<String> {
-    let mt = match <MemoType as std::str::FromStr>::from_str(mem_type) {
-        Ok(t) => t,
-        Err(_) => {
-            eprintln!(
-                "[warn] unknown memo_type '{}', falling back to working",
-                mem_type
-            );
-            MemoType::Working
-        }
-    };
+    let mt = <MemoType as std::str::FromStr>::from_str(mem_type)?;
     let id = manager.add(content, mt, HashMap::new(), importance)?;
     Ok(id)
 }
@@ -623,11 +614,11 @@ mod tests {
     }
 
     #[test]
-    fn cli_unknown_type_falls_back_to_working() {
+    fn cli_unknown_type_is_rejected() {
         let m = mgr();
-        // An unknown memo_type must not break the evaluation pipeline; degrade to working and write successfully
-        let id = add(&m, "bogus", "x", 0.5).expect("unknown type should fall back, not error");
-        assert!(!id.is_empty());
+        let err = add(&m, "bogus", "x", 0.5).unwrap_err();
+        assert!(matches!(err, MemoError::InvalidParam(_)));
+        assert!(m.list(None).unwrap().is_empty());
     }
 
     #[test]
