@@ -358,7 +358,7 @@ scripts/check-emudhra.sh /etc/ssl/certs/ca-certificates.crt
 
 ## 📝 许可证
 
-Apache-2.0，详见 [LICENSE](./LICENSE)。
+MIT，详见 [LICENSE](./LICENSE)。
 
 <div align="right">
 
@@ -385,7 +385,7 @@ Apache-2.0，详见 [LICENSE](./LICENSE)。
 <div align="center">
 
 Copyright © 2026 [ariacompute][org]. <br/>
-This project is [Apache-2.0](./LICENSE) licensed.
+This project is [MIT](./LICENSE) licensed.
 
 </div>
 

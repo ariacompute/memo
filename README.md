@@ -359,7 +359,7 @@ All detailed docs live under [`docs/`](./docs):
 
 ## 📝 License
 
-Apache-2.0. See [LICENSE](./LICENSE).
+MIT. See [LICENSE](./LICENSE).
 
 <div align="right">
 
@@ -386,7 +386,7 @@ This repository follows the Harness Engineering philosophy: the repository is th
 <div align="center">
 
 Copyright © 2026 [ariacompute][org]. <br/>
-This project is [Apache-2.0](./LICENSE) licensed.
+This project is [MIT](./LICENSE) licensed.
 
 </div>
 
