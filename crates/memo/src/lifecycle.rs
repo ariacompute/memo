@@ -127,6 +127,10 @@ mod tests {
         let mut m2 = sample("b", 1.0);
         decay_importance(&mut m2, 1_000_000, 1);
         assert!(m2.importance >= 0.0 && m2.importance < 1.0);
+        // Negative importance is clamped to zero rather than propagated.
+        let mut m3 = sample("c", -1.0);
+        decay_importance(&mut m3, 100, 100);
+        assert_eq!(m3.importance, 0.0);
     }
 
     #[test]

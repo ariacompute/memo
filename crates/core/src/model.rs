@@ -867,6 +867,22 @@ mod relation_tests {
     }
 
     #[test]
+    fn graph_bfs_reports_budget_stop() {
+        let edges: HashMap<MemoId, Vec<(MemoId, f32, RelationKind)>> = {
+            let mut m = HashMap::new();
+            m.insert("a".into(), vec![("b".into(), 0.9, RelationKind::Semantic)]);
+            m.insert("b".into(), vec![("c".into(), 0.8, RelationKind::Semantic)]);
+            m
+        };
+        let (out, stop) = graph_bfs(&["a".into()], &[], 1, 2, &mut |n| {
+            edges.get(n).cloned().unwrap_or_default()
+        });
+        assert_eq!(stop, "budget");
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].0, "a");
+    }
+
+    #[test]
     fn graph_bfs_skips_neighbors_already_visited() {
         // a -> b, b -> a (back edge) and b -> c. With max_hops=3 the node b is
         // expanded, and its edge back to the already visited seed a is skipped.

@@ -128,7 +128,7 @@
 63. [x] CLI 接缝重构（对外参数/输出/退出码不变）：`upgrade` 增 `HttpGet` 注入（覆盖 2xx/非 2xx/坏 JSON、zip/tar.gz/未知扩展、安装缺失/改名回退、版本相同提前返回）；`setup` 增 `Prompter` 注入（TTY 1/2/空/非法、非 TTY 三级回退、status 有/无）；`config` 抽 `resolve_memo_home` 纯函数；`main` 抽 `entry(args)->i32` 并逐子命令补测
 64. [x] 死分支清理：删除可证明不可达的守卫与重复校验（如 `lindera_tokens` 的错误映射改为 `unwrap_or_default()`），不引入 `#[coverage(off)]`；真实 stdin/stdout 与网络出口保留为薄包装
 65. [x] 新增 `.github/workflows/ci.yml`：push(main)/PR 触发 → `cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace` → `python -m unittest discover -s benches/tests -t benches`；ci/release 另配 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` + `actions/cache`；不设覆盖率阈值
-66. [x] 验收（`cargo llvm-cov 0.9.1` 实测，先用 `scripts/prefetch-lindera.sh` 预热缓存）：Lines 6067/6067 = 100.00%（missed 0）、Functions 631/631 = 100.00%（missed 0）；Regions 7848 total / 191 missed = 97.57%（不作门禁）；Rust 与 Python 门禁本地全绿
+66. [x] 验收（`cargo llvm-cov 0.9.1` 实测，先用 `scripts/prefetch-lindera.sh` 预热缓存）：Lines 6153/6153 = 100.00%（missed 0）、Functions 638/638 = 100.00%（missed 0）；Regions 7967 total / 175 missed = 97.80%（不作门禁）；Rust 与 Python 门禁本地全绿
 
 ### M8
 - 覆盖率仅本地自查：`LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov clean --workspace && LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov --workspace --summary-only --show-missing-lines`（先 clean，避免旧 profdata 串味；缓存由 `scripts/prefetch-lindera.sh` 预热）。
@@ -141,7 +141,7 @@
 3. [x] `run.py --sizes` 默认 `1000,10000,100000`，`--systems` 默认 `DEFAULT_SYSTEMS`，README / bench_results 同步。
 4. [x] 文档环境变量名 `ARIA_MEMORY_BIN` → `ARIA_MEMO_BIN`（3 处）。
 5. [x] ci/release 配置 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` + `actions/cache`；新增 `scripts/prefetch-lindera.sh`；构建期网络承诺改为如实描述。
-6. [x] 补 `search` 损坏 metadata 行在 FTS 候选/全表两路径的 `Serialization` 用例；覆盖率声明改为实测 Lines/Functions 100%、Regions 97.57%。
+6. [x] 补 `search` 损坏 metadata 行在 FTS 候选/全表两路径的 `Serialization` 用例；覆盖率声明改为实测 Lines/Functions 100%、Regions 97.80%。
 7. [x] task.md M3 17–28 勾选并补「已知限制」（MemOS/MemPalace 移除、agentmem 需 `AGENTMEM_BIN`）。
 8. [x] `benches/tests/__init__.py` 支持 unittest discover 与 pytest 两种发现方式。
 9. [x] 移除 MemOS / MemPalace adapter 与全部文档引用；新增本地 HTTP `agentmem` adapter（含单测与真实二进制冒烟）。

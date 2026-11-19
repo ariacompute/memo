@@ -633,6 +633,24 @@ mod tests {
     }
 
     #[test]
+    fn cli_list_rejects_unknown_type() {
+        let m = mgr();
+        assert!(matches!(
+            list(&m, Some("bogus"), false),
+            Err(MemoError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
+    fn cli_graph_retrieve_rejects_unknown_view() {
+        let m = mgr();
+        assert!(matches!(
+            graph_retrieve(&m, "x", "bogus", 20, 3, 5, false),
+            Err(MemoError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
     fn cli_list_and_search_json() {
         let m = mgr();
         let id = add(&m, "working", "user likes rust", 0.8).unwrap();

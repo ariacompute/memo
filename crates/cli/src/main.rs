@@ -683,5 +683,19 @@ mod tests {
             ]),
             1
         );
+        // Strict --type rejection is a runtime error at the CLI boundary too.
+        assert_eq!(
+            entry([
+                "aria-memo",
+                "--db",
+                ":memory:",
+                "add",
+                "--type",
+                "bogus",
+                "--content",
+                "x"
+            ]),
+            1
+        );
     }
 }

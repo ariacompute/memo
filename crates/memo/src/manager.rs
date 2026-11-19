@@ -842,6 +842,15 @@ mod tests {
         assert!(m.get(&id).unwrap().is_some());
     }
 
+    #[test]
+    fn with_sqlite_rejects_directory_path() {
+        let e: Arc<dyn Embedder> = Arc::new(LocalEmbedder::new(64));
+        let dir = std::env::temp_dir();
+        let path = dir.to_str().expect("temp dir is valid UTF-8");
+        assert!(MemoManager::with_sqlite(e.clone(), path).is_err());
+        assert!(MemoManager::with_sqlite_wal(e, path).is_err());
+    }
+
     fn manual_memo(manager: &MemoManager, id: &str, content: &str, ts: i64) -> Memo {
         let emb = manager.embedder.embed(content).unwrap();
         Memo {

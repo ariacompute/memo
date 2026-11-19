@@ -1117,6 +1117,41 @@ mod tests {
     }
 
     #[test]
+    fn wrong_typed_columns_error_on_read() {
+        let cases = [
+            ("id", "X'00'"),
+            ("memo_type", "X'00'"),
+            ("content", "X'00'"),
+            ("embedding", "'not-a-blob'"),
+            ("metadata", "X'00'"),
+            ("importance", "'not-a-real'"),
+            ("version", "'not-an-integer'"),
+            ("created_at", "'not-an-integer'"),
+            ("updated_at", "'not-an-integer'"),
+        ];
+        for (column, value) in cases {
+            let s = SqliteStore::open(":memory:").unwrap();
+            s.add(&mem("x", "hello", Some(vec![1.0, 0.0]))).unwrap();
+            s.conn
+                .lock()
+                .unwrap()
+                .execute(
+                    &format!("UPDATE memories SET {column}={value} WHERE id='x'"),
+                    [],
+                )
+                .unwrap();
+            let failed = if column == "id" {
+                // Changing the queried id removes the row from `get`; `list` still
+                // decodes it and must surface the column-type error.
+                s.list(None).is_err()
+            } else {
+                s.get(&"x".into()).is_err()
+            };
+            assert!(failed, "column {column} should fail");
+        }
+    }
+
+    #[test]
     fn corrupt_metadata_errors_on_search_lexical_candidates() {
         let s = SqliteStore::open(":memory:").unwrap();
         s.add(&mem("x", "rust systems programming", Some(vec![1.0, 0.0])))

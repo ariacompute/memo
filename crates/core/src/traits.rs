@@ -419,6 +419,23 @@ mod tests {
     }
 
     #[test]
+    fn mem_store_rejects_invalid_relation() {
+        let s = MemStore::new();
+        let rel = Relation {
+            from_id: "a".into(),
+            to_id: "a".into(),
+            kind: RelationKind::Semantic,
+            score: 0.5,
+            provenance: "local".into(),
+            created_at: 1,
+        };
+        assert!(matches!(
+            s.add_relation(&rel),
+            Err(MemoError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
     fn mem_store_relation_filters_cover_every_field() {
         let s = MemStore::new();
         put(&s, "a");
