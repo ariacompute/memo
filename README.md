@@ -26,13 +26,13 @@ no heavy ML frameworks. Ships an offline-first, multi-relational memory plane<br
 
 - [✨ Features](#features)
 - [💾 Architecture](#architecture)
-- [🔍 Search & retrieval](#search--retrieval)
 - [🚀 Quick start](#quick-start)
 - [🧰 Command line](#command-line)
 - [🔨 Development](#development)
 
 **Internals & data**
 
+- [🔍 Search & retrieval](#search--retrieval)
 - [🕸️ Multi-relational memory plane](#multi-relational-memory-plane)
 - [📊 Benchmarks & comparison](#benchmarks--comparison)
 - [📂 Directory](#directory)
@@ -72,23 +72,6 @@ cli(aria-memo) → memo(orchestration) → storage(SQLite) / embed(local embeddi
 ```
 
 `memo` depends on `core` + `storage` + `embed`; `storage` / `embed` depend only on `core`. There are no upward imports.
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-## 🔍 Search & retrieval
-
-Hybrid search blends semantic (cosine over local embeddings) and lexical (keyword) relevance:
-`score = semantic_weight·cosine + keyword_weight·lexical_relevance`.
-
-- **Lexical pushdown (FTS5).** `memories.content` is indexed with a SQLite FTS5 virtual table (`memories_fts`). On a hybrid query the store runs `MATCH` + `bm25()` *inside SQLite* to prune the candidate set to the top lexical hits first, then computes cosine only on that small set — eliminating the old full-table scan. Pure-semantic queries (or when FTS5 finds no lexical hit) fall back to a full scan so recall is preserved. **Multilingual word segmentation:** because the bundled SQLite build cannot enable the built-in `icu` tokenizer, content is pre-segmented in Rust before FTS5 indexing and the same `segment` logic tokenizes the query, so sub-words match instead of the whole run being one unmatchable token. Routing is by Unicode script: Chinese (zh/zh-TW) via `jieba-rs`, Japanese (ja) and Korean (ko) via `lindera` (embedded ipadic/ko-dic dictionaries), and the remaining space-delimited languages (en/es/fr/de/it/ru/pt/ar/hi) via whitespace — covering all 13 cockpit locales. The FTS index is rebuilt once on open (via `PRAGMA user_version`) so pre-existing databases pick up the segmented tokens (bumped to 4 for the multilingual router).
-- **Higher lexical weight.** `SearchQuery.keyword_weight` defaults to `0.5` (was `0.3`), so lexical hits prune and rank earlier; `semantic_weight` stays `0.7`. `MemoryController` uses the same `0.7 / 0.5` blend.
-- **Batch retrieval.** `MemoStore::search_batch` / `MemoManager::search_batch` / `recall_batch` score many queries under a single connection lock (one FTS5 prep + one scan), returning `Vec<Vec<ScoredMemo>>`. The CLI exposes `aria-memo search-batch --text … --text …` and `aria-memo bench --batch` (which reports `batch.ops_per_sec`).
-
-**Offline retrieval quality.** The flat `search` path is a hybrid of a local semantic score (cosine over the hashing embedder) and a dependency-free lexical score (`lexical_relevance`: rarity-weighted term overlap plus an exact-phrase bonus, with CJK character 2-grams). Because the bundled embedder is a lightweight hash/TF-IDF vectorizer — no heavy ML — the semantic signal is intentionally weak; `lexical_relevance` maximizes the keyword contribution so offline recall stays useful. Tune `SearchQuery.keyword_weight` (default `0.5`) to shift the balance.
 
 <div align="right">
 
@@ -164,6 +147,23 @@ Run only the binary-level e2e suite with `cargo test -p aria-memo --test cli_bin
 | `scripts/check-emudhra.sh <bundle>` | offline eMudhra/emSign CA fingerprint scan |
 
 `cargo test` passes without Postgres, network, or credentials — every external dependency is local (SQLite) or faked.
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
+
+</div>
+
+## 🔍 Search & retrieval
+
+Hybrid search blends semantic (cosine over local embeddings) and lexical (keyword) relevance:
+`score = semantic_weight·cosine + keyword_weight·lexical_relevance`.
+
+- **Lexical pushdown (FTS5).** `memories.content` is indexed with a SQLite FTS5 virtual table (`memories_fts`). On a hybrid query the store runs `MATCH` + `bm25()` *inside SQLite* to prune the candidate set to the top lexical hits first, then computes cosine only on that small set — eliminating the old full-table scan. Pure-semantic queries (or when FTS5 finds no lexical hit) fall back to a full scan so recall is preserved. **Multilingual word segmentation:** because the bundled SQLite build cannot enable the built-in `icu` tokenizer, content is pre-segmented in Rust before FTS5 indexing and the same `segment` logic tokenizes the query, so sub-words match instead of the whole run being one unmatchable token. Routing is by Unicode script: Chinese (zh/zh-TW) via `jieba-rs`, Japanese (ja) and Korean (ko) via `lindera` (embedded ipadic/ko-dic dictionaries), and the remaining space-delimited languages (en/es/fr/de/it/ru/pt/ar/hi) via whitespace — covering all 13 cockpit locales. The FTS index is rebuilt once on open (via `PRAGMA user_version`) so pre-existing databases pick up the segmented tokens (bumped to 4 for the multilingual router).
+- **Higher lexical weight.** `SearchQuery.keyword_weight` defaults to `0.5` (was `0.3`), so lexical hits prune and rank earlier; `semantic_weight` stays `0.7`. `MemoryController` uses the same `0.7 / 0.5` blend.
+- **Batch retrieval.** `MemoStore::search_batch` / `MemoManager::search_batch` / `recall_batch` score many queries under a single connection lock (one FTS5 prep + one scan), returning `Vec<Vec<ScoredMemo>>`. The CLI exposes `aria-memo search-batch --text … --text …` and `aria-memo bench --batch` (which reports `batch.ops_per_sec`).
+
+**Offline retrieval quality.** The flat `search` path is a hybrid of a local semantic score (cosine over the hashing embedder) and a dependency-free lexical score (`lexical_relevance`: rarity-weighted term overlap plus an exact-phrase bonus, with CJK character 2-grams). Because the bundled embedder is a lightweight hash/TF-IDF vectorizer — no heavy ML — the semantic signal is intentionally weak; `lexical_relevance` maximizes the keyword contribution so offline recall stays useful. Tune `SearchQuery.keyword_weight` (default `0.5`) to shift the balance.
 
 <div align="right">
 

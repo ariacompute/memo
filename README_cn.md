@@ -26,13 +26,13 @@ Rust 实现的边缘/移动端部署：记忆的增删改查、语义 + 关键�
 
 - [✨ 功能](#features)
 - [💾 架构](#architecture)
-- [🔍 检索](#search--retrieval)
 - [🚀 快速开始](#quick-start)
 - [🧰 命令行](#command-line)
 - [🔨 开发](#development)
 
 **内部机制与数据**
 
+- [🔍 检索](#search--retrieval)
 - [🕸️ 多关系记忆平面](#multi-relational-memory-plane)
 - [📊 对比评测](#benchmarks--comparison)
 - [📂 目录](#directory)
@@ -72,23 +72,6 @@ cli(aria-memo) → memo(编排) → storage(SQLite) / embed(本地嵌入) → co
 ```
 
 `memo` 依赖 `core` + `storage` + `embed`；`storage` / `embed` 只依赖 `core`。不存在上向依赖。
-
-<div align="right">
-
-[![][back-to-top]](#readme-top)
-
-</div>
-
-## 🔍 检索
-
-混合检索融合语义（本地嵌入余弦）与词法（关键词）相关性：
-`score = semantic_weight·cosine + keyword_weight·lexical_relevance`。
-
-- **词法下推（FTS5）。** `memories.content` 由 SQLite FTS5 虚拟表 `memories_fts` 索引。混合查询时，存储层先在 *SQLite 内部* 跑 `MATCH` + `bm25()` 把候选集剪枝到词法命中最高的若干条，再仅对这小集合计算余弦——彻底消除了旧有的全表扫描。纯语义查询（或 FTS5 无词法命中）回退到全表扫描，保证召回不丢。**多语言词级切分：** 由于本项目的 bundled SQLite 无法开启内置 `icu` 分词器，写入前会在 Rust 侧做词级预切分、查询侧用同一 `segment` 逻辑切分，使子词命中而非整段当一个不可匹配的 token。路由按 Unicode 文字范围：中文 `zh/zh-TW` 用 `jieba-rs`，日语 `ja` 与韩语 `ko` 用 `lindera`（内嵌 ipadic/ko-dic 词典），其余按空格切分的语言（en/es/fr/de/it/ru/pt/ar/hi）走空格切分——覆盖 cockpit 的全部 13 种语言。FTS 索引在打开时通过 `PRAGMA user_version` 一次性重建（多语言路由已升到 4），使已有数据库也用上切分后的 token。
-- **更高的词法权重。** `SearchQuery.keyword_weight` 默认 `0.5`（原 `0.3`），词法命中更早参与剪枝与排序；`semantic_weight` 保持 `0.7`。`MemoryController` 同样使用 `0.7 / 0.5`。
-- **批量检索。** `MemoStore::search_batch` / `MemoManager::search_batch` / `recall_batch` 在单次连接锁内（一次 FTS5 准备 + 一次扫描）对多个查询打分，返回 `Vec<Vec<ScoredMemo>>`。CLI 提供 `aria-memo search-batch --text … --text …` 与 `aria-memo bench --batch`（报告 `batch.ops_per_sec`）。
-
-**离线检索质量。** 扁平 `search` 走混合检索：本地语义分（哈希嵌入的余弦）+ 零依赖的词法分（`lexical_relevance`：按稀有度加权的词项重叠 + 精确短语奖励，并含 CJK 字符 2-gram）。由于内置嵌入器是轻量 hash/TF-IDF 向量器（不引入重型 ML），语义信号刻意偏弱；`lexical_relevance` 最大化关键词贡献，使离线召回仍可用。可用 `SearchQuery.keyword_weight`（默认 `0.5`）调节平衡。
 
 <div align="right">
 
@@ -164,6 +147,23 @@ cargo run -p aria-memo -- search --text "Rust" --top-k 5
 | `scripts/check-emudhra.sh <bundle>` | 离线扫描 eMudhra/emSign CA 指纹 |
 
 `cargo test` 无需 Postgres、网络或凭据即可通过——每个外部依赖都是本地（SQLite）或被 fake。
+
+<div align="right">
+
+[![][back-to-top]](#readme-top)
+
+</div>
+
+## 🔍 检索
+
+混合检索融合语义（本地嵌入余弦）与词法（关键词）相关性：
+`score = semantic_weight·cosine + keyword_weight·lexical_relevance`。
+
+- **词法下推（FTS5）。** `memories.content` 由 SQLite FTS5 虚拟表 `memories_fts` 索引。混合查询时，存储层先在 *SQLite 内部* 跑 `MATCH` + `bm25()` 把候选集剪枝到词法命中最高的若干条，再仅对这小集合计算余弦——彻底消除了旧有的全表扫描。纯语义查询（或 FTS5 无词法命中）回退到全表扫描，保证召回不丢。**多语言词级切分：** 由于本项目的 bundled SQLite 无法开启内置 `icu` 分词器，写入前会在 Rust 侧做词级预切分、查询侧用同一 `segment` 逻辑切分，使子词命中而非整段当一个不可匹配的 token。路由按 Unicode 文字范围：中文 `zh/zh-TW` 用 `jieba-rs`，日语 `ja` 与韩语 `ko` 用 `lindera`（内嵌 ipadic/ko-dic 词典），其余按空格切分的语言（en/es/fr/de/it/ru/pt/ar/hi）走空格切分——覆盖 cockpit 的全部 13 种语言。FTS 索引在打开时通过 `PRAGMA user_version` 一次性重建（多语言路由已升到 4），使已有数据库也用上切分后的 token。
+- **更高的词法权重。** `SearchQuery.keyword_weight` 默认 `0.5`（原 `0.3`），词法命中更早参与剪枝与排序；`semantic_weight` 保持 `0.7`。`MemoryController` 同样使用 `0.7 / 0.5`。
+- **批量检索。** `MemoStore::search_batch` / `MemoManager::search_batch` / `recall_batch` 在单次连接锁内（一次 FTS5 准备 + 一次扫描）对多个查询打分，返回 `Vec<Vec<ScoredMemo>>`。CLI 提供 `aria-memo search-batch --text … --text …` 与 `aria-memo bench --batch`（报告 `batch.ops_per_sec`）。
+
+**离线检索质量。** 扁平 `search` 走混合检索：本地语义分（哈希嵌入的余弦）+ 零依赖的词法分（`lexical_relevance`：按稀有度加权的词项重叠 + 精确短语奖励，并含 CJK 字符 2-gram）。由于内置嵌入器是轻量 hash/TF-IDF 向量器（不引入重型 ML），语义信号刻意偏弱；`lexical_relevance` 最大化关键词贡献，使离线召回仍可用。可用 `SearchQuery.keyword_weight`（默认 `0.5`）调节平衡。
 
 <div align="right">
 
