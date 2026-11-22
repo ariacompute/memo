@@ -73,6 +73,14 @@ cli(aria-memo) → memo(orchestration) → storage(SQLite) / embed(local embeddi
 
 `memo` depends on `core` + `storage` + `embed`; `storage` / `embed` depend only on `core`. There are no upward imports.
 
+![MEMO System Architecture](./arch.png)
+
+The diagram above shows MEMO's four layers: **Entry** (`aria-memo` CLI and `benches/` evaluation), **Memo** (manager / lifecycle / MemoryController + RelationScorer), **Capabilities** (`storage` with SQLite + FTS5 and `embed` with local embeddings), and **Core & Data** (`core` traits / models and the local SQLite store). Dependencies flow in one direction only, with zero network activity at runtime; the sole outbound path is the optional `upgrade` download.
+
+![MEMO Data Flow](./dataflow.png)
+
+The diagram above summarizes two paths. **Write**: local embedding → persist to SQLite with a synced FTS5 index → `connect` infers semantic / temporal / causal / entity edges. **Read**: multilingual segmentation → FTS5 `bm25()` lexical candidate pushdown → cosine rerank on candidates → optional bounded `graph_bfs` expansion, returning top-k scored memories and an inspectable `RetrieveTrace`. Batch retrieval (`search_batch` / `recall_batch`) prepares and scans once under a single connection lock.
+
 <div align="right">
 
 [![][back-to-top]](#readme-top)

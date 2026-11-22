@@ -73,6 +73,14 @@ cli(aria-memo) → memo(编排) → storage(SQLite) / embed(本地嵌入) → co
 
 `memo` 依赖 `core` + `storage` + `embed`；`storage` / `embed` 只依赖 `core`。不存在上向依赖。
 
+![MEMO 系统架构](./arch_cn.png)
+
+上图展示 MEMO 的四层架构：**入口层**（`aria-memo` CLI 与 `benches/` 评测编排）、**编排层**（`memo` 的 manager / lifecycle / MemoryController + RelationScorer）、**能力层**（`storage` 的 SQLite + FTS5 与 `embed` 的本地嵌入）、**契约与数据层**（`core` 的 trait / 模型与本地 SQLite 库）。依赖方向严格单向，运行期零网络；唯一的出向路径是可选的 `upgrade` 下载。
+
+![MEMO 数据流](./dataflow_cn.png)
+
+上图概括两条主路径。**写入**：本地嵌入 → SQLite 落库并同步 FTS5 索引 → `connect` 推断 semantic / temporal / causal / entity 四视图边。**读取**：多语言切分 → FTS5 `bm25()` 词法候选下推 → 候选集余弦精排 → 可选 `graph_bfs` 有界扩展，最终返回 top-k 打分记忆与可检视的 `RetrieveTrace`。批量检索 `search_batch` / `recall_batch` 在单次连接锁内一次准备、一次扫描。
+
 <div align="right">
 
 [![][back-to-top]](#readme-top)
