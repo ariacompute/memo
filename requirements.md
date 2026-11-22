@@ -11,7 +11,7 @@
 - 持久化：嵌入式 SQLite（rusqlite bundled），自动建表/迁移/索引、批量写入。
 - 检索：两条入口 —— `search` 为语义（向量余弦）+ 词法（FTS5 `bm25()`）**混合**打分（支持 top-k 与阈值；词法命中经 FTS5 候选下推，仅对候选集做内存精排，否则全表扫描保语义召回）；`recall` 为**纯向量（余弦-only）**召回，按 query 与记忆的余弦相似度排序（keyword 权重为 0）。批量入口 `search_batch`/`recall_batch`：一次持锁对多个 query 评分（见 §2.3）。
 - 记忆管理：`consolidate`（巩固：提升重要性/合并）、`dedup`（去重：相似度阈值合并）。
-- 生命周期：分层老化（Working 1h / ShortTerm 7d / LongTerm 30d 半衰期，`decay_importance_by_tier`）、重要性衰减、遗忘（默认硬删除，预留软删除标记）。
+- 生命周期：分层老化（Working 1h / ShortTerm 7d / LongTerm 30d 半衰期，`decay_importance_by_tier`，编排入口 `MemoManager::age` + CLI `memo age`）、重要性衰减、遗忘（默认硬删除，预留软删除标记）。
 - 统一错误 `MemoError`；可选 CLI（add/get/search/list/forget）。
 - 全部新增功能同步单测，核心逻辑覆盖正常 + 异常路径。
 
@@ -101,7 +101,7 @@ pub struct RecallQuery {
 ### 2.2 trait（memo-core）
 - `MemoStore`：`add` / `get` / `update` / `forget` / `search` / `search_batch`（默认方法：逐条调 `search`，`SqliteStore` 持锁循环 `search_inner` 实现批量）。
 - `Embedder`：`fn embed(&self, text: &str) -> Result<Vec<f32>, MemoError>`。
-- `StorageBackend`：`open` / `migrate` / 原始 CRUD（抽象，供复制后端扩展）。
+- `StorageBackend`：`open(location) -> Result<Self>`（`where Self: Sized`，不影响其余方法的 object safety）/ `migrate` / 原始记录 CRUD（`put_record` 按 id upsert、`get_record`、`delete_record`、`scan_records`）。语义检索（`search`/关系/图扩展）留在 `MemoStore`，复制后端只需搬运整条记录，未实现能力返回 `MemoError::Other` 而非静默 no-op。
 - 纯向量召回 `recall` 是 `MemoManager` 方法（复用 `search` 的存储层，令
   `semantic_weight=1` / `keyword_weight=0`），**不在** `MemoStore` trait 上。
 
@@ -118,6 +118,7 @@ pub struct RecallQuery {
   嵌入 query 文本后按余弦相似度排序（keyword 权重为 0）；`query.query_embedding`
   已预置时跳过 embedder。`search` 为混合检索，`recall` 为纯向量，二者区分明确。
 - `consolidate(id, delta_importance)` / `dedup(threshold)` -> 见 §1.1
+- `age(elapsed_sec: i64) -> Result<usize>`：按每条记忆所属层级的半衰期批量衰减重要性并回写（变化的条目 `version+1`、刷新 `updated_at`），返回实际被衰减条数；`elapsed_sec <= 0` -> `InvalidParam`（不静默 no-op）。
 
 ### 2.4 CLI（aria-memo，二进制名 `aria-memo` / 命令显示名 `memo`）
 - `memo add --type working --content "..." --importance 0.8`
@@ -129,6 +130,7 @@ pub struct RecallQuery {
 - `memo bench --size N --top-k K --warmup W [--batch] [--json]`：新增 `--batch` 开关，在单查询基准之外额外测量「单次锁内批量检索」吞吐（`report["batch"]` 含 `total_ms` / `ops_per_sec`）；其余 JSON 形态不变。
 - `memo recall --text "..." --top-k 5`：纯向量召回，输出 `score\tcontent` 逐行；`memo recall --text "..." --top-k 5 --json`：输出 JSON 数组（含 `score`/`id`/`content`/`memo_type`），与 `search` 形态一致。
 - `memo update --id <id> [--content "..."] [--type ...] [--importance 0.8]`：按 id 更新记忆（内容变更自动重算 embedding、version+1），至少一项非空；缺失 id / 空 patch / 非法类型或 importance 走 `MemoError`。供 HaluMem 操作级评测。
+- `memo age --elapsed-sec <N> [--json]`：按层级半衰期批量老化（`N` 必须 > 0，否则 exit 1 + `error:`）；默认输出 `aged <n>`，`--json` 输出 `{"aged": n, "elapsed_sec": N}`。
 - `memo forget --id <id>`
 - `memo bench --size N --top-k K --warmup W --json`（M2：进程内微基准 JSON）
 
@@ -333,6 +335,7 @@ pub fn graph_bfs(
   - 离线指标（无条件计算）：LoCoMo-Refined token-F1 / BLEU；PersonaMem 多选准确率；HaluMem / LongMemEval 检索层 Recall@k。
   - judge 指标（需 OpenAI 兼容 LLM，凭据缺失则 skip）：LoCoMo-Refined 严格 judge 准确率；HaluMem 提取/更新/QA 的语义判定（Recall/Accuracy/FMR/幻觉率/遗漏率）；LongMemEval QA 准确率。
 - Adapter 契约扩展：统一 `add` / `search`（及可选 `reset`）；新增**可选能力** `list_memories` / `update`，默认抛 `UnsupportedCapability` 并降级；aria adapter 实现之（依赖 CLI `update` + `list --json`）供 HaluMem 操作级评测。
+- HaluMem 更新寻址：`add` 返回后端生成 id，须在 ingest 期建立 `上游 MemoryID -> 后端 id` 映射供「记忆更新」使用；映射缺失时回退按 gold `Content` 精确匹配 `list_memories`。无法寻址（`id_unmapped`）或更新失败（`update_failed`）必须计数并写入 `Score.reason` + `stderr`，禁止 `except: pass`；`update_accuracy` / `hallucination_rate` 的数值语义保持不变。
 - 数据集获取：`benches/datasets.py` 提供 `resolve_dataset(bench)`（真实目录优先、仓库内置 fixture 回退并标 `dataset_source: fixture`）与 `download(bench)`（urllib 拉取 HF/GitHub，失败打印手动指引）；`run.py` 增 `--download` / `--limit` / `--judge-model`。
 - 产物：JSON + Markdown 报告；离线指标与 judge 指标分列，judge 标注模型名；skip 项带 `reason`。
 

@@ -172,7 +172,29 @@ def _run_extraction(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> l
 
 
 # ---------- Sub-task 2: memory updating ----------
-def _run_updating(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> list[Score]:
+def _answer_text(answer: Any) -> str:
+    """Normalize an upstream `Answer` (str | list[str] | None) into the update payload."""
+    if answer is None:
+        return ""
+    if isinstance(answer, str):
+        return answer
+    return " ".join(str(a) for a in answer)
+
+
+def _run_updating(
+    backend: MemoBackend,
+    ds: Dataset,
+    judge: Judge | None,
+    memo_ids: dict[str, str] | None = None,
+) -> list[Score]:
+    """Memory updating sub-task.
+
+    Upstream `UpdateMemoryID` addresses memories by HaluMem's own `MemoryID`, while
+    backends generate their own ids on `add`. `memo_ids` carries the mapping built
+    during ingest; when it is unavailable (e.g. `do_ingest=False`) we fall back to an
+    exact-content match over `list_memories`. Unmapped ids and failed updates are
+    counted and reported through `Score.reason` — never silently swallowed.
+    """
     scores: list[Score] = []
     if not backend.supports("update"):
         return [
@@ -196,16 +218,61 @@ def _run_updating(backend: MemoBackend, ds: Dataset, judge: Judge | None) -> lis
                 skipped_score(nm, "no update-type questions in this dataset", subset="updating")
             )
         return scores
+    mapping = {str(k): str(v) for k, v in (memo_ids or {}).items()}
+    gold_by_memory_id = {
+        str(m["MemoryID"]): m.get("Content", "")
+        for m in ds.memories
+        if m.get("MemoryID") is not None
+    }
+    listed: list | None = None
+
+    def _lookup_listed(gold_content: str) -> str | None:
+        """Fallback: resolve an unmapped upstream id by exact gold-content match."""
+        nonlocal listed
+        if listed is None:
+            try:
+                listed = backend.list_memories()
+            except Exception as exc:  # noqa: BLE001 - degrade, but say why
+                print(f"[halumem] list_memories failed: {exc}", file=sys.stderr, flush=True)
+                listed = []
+        for hit in listed:
+            if hit.content == gold_content:
+                return str(hit.id)
+        return None
+
     updated_ok = 0
+    update_failed = 0
+    id_unmapped = 0
+    failures: list[str] = []
     total = len(update_qs)
     for q in update_qs:
+        raw_id = str(q["UpdateMemoryID"])
+        target = mapping.get(raw_id)
+        if target is None:
+            gold_content = gold_by_memory_id.get(raw_id)
+            if gold_content is not None and backend.supports("list_memories"):
+                target = _lookup_listed(gold_content)
+        if target is None:
+            id_unmapped += 1
+            if len(failures) < 3:
+                failures.append(f"id_unmapped(UpdateMemoryID={raw_id})")
+            continue
         try:
-            backend.update(q["UpdateMemoryID"], content=" ".join(q.get("Answer", []) or [q.get("Answer", "")]))
+            backend.update(target, content=_answer_text(q.get("Answer")))
             updated_ok += 1
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001 - counted and reported below
+            update_failed += 1
+            if len(failures) < 3:
+                failures.append(f"update_failed(id={target}): {str(exc)[:200]}")
+    for msg in failures:
+        print(f"[halumem] update issue: {msg}", file=sys.stderr, flush=True)
     acc = updated_ok / total if total else 0.0
-    scores.append(Score(name="update_accuracy", value=acc, requires_llm=False, subset="updating"))
+    reason = f"ok={updated_ok} update_failed={update_failed} id_unmapped={id_unmapped}"
+    if failures:
+        reason += f"; first_error={failures[0]}"
+    scores.append(
+        Score(name="update_accuracy", value=acc, requires_llm=False, subset="updating", reason=reason)
+    )
     scores.append(Score(name="hallucination_rate", value=1.0 - acc, requires_llm=False, subset="updating"))
     scores.append(Score(name="omission_rate", value=0.0, requires_llm=False, subset="updating"))
     return scores
@@ -266,6 +333,9 @@ def run(
     top_k: int,
     do_ingest: bool = True,
 ) -> list[Score]:
+    # upstream `MemoryID` -> backend-generated id (filled during ingest); the memory
+    # updating sub-task needs it because backends generate their own ids on `add`.
+    memo_ids: dict[str, str] = {}
     if do_ingest:
         backend.reset()
         import sys
@@ -278,10 +348,12 @@ def run(
         for m in dataset.memories:
             if m.get("Distraction"):
                 continue
-            backend.add(
+            added_id = backend.add(
                 m["Content"],
                 {"memo_type": m.get("Type", "working"), "importance": float(m.get("Importance", 0.5))},
             )
+            if m.get("MemoryID") is not None and added_id:
+                memo_ids[str(m["MemoryID"])] = str(added_id)
             done += 1
             if done % 500 == 0:
                 print(f"[halumem] ingest {done}/{total_ingest}", file=sys.stderr, flush=True)
@@ -295,4 +367,8 @@ def run(
                     if done % 500 == 0:
                         print(f"[halumem] ingest {done}/{total_ingest}", file=sys.stderr, flush=True)
         print(f"[halumem] ingest done {done}/{total_ingest}", file=sys.stderr, flush=True)
-    return _run_extraction(backend, dataset, judge) + _run_updating(backend, dataset, judge) + _run_qa(backend, dataset, judge)
+    return (
+        _run_extraction(backend, dataset, judge)
+        + _run_updating(backend, dataset, judge, memo_ids)
+        + _run_qa(backend, dataset, judge)
+    )

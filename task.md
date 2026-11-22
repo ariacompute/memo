@@ -148,6 +148,17 @@
 9. [x] 移除 MemOS / MemPalace adapter 与全部文档引用；新增本地 HTTP `agentmem` adapter（含单测与真实二进制冒烟）。
 10. [x] `add --type` 严格报错；新增 Working/ShortTerm/LongTerm 半衰期策略；`graph_bfs` 修正为真实 best-score 语义并补多路径用例。
 
+## 本轮修复 — 完整度评估 v2 §8 第 1/2/3/5 项（已完成）
+
+> 依据 `memo-completeness-assessment-v2.md` §8「建议的修复顺序」。第 4 项（恢复 MemOS/MemPalace 定性对标列）按评估方语境暂不改动。
+
+1. [x] **N1 HaluMem「记忆更新」寻址**：`track_b/halumem/__init__.py` 在 ingest 期记录 `上游 MemoryID -> backend.add() 返回 id` 映射；`_run_updating` 三级寻址（映射 → `list_memories` 按 gold `Content` 精确匹配 → `id_unmapped`），失败分 `update_failed` / `id_unmapped` 计数并写入 `Score.reason` + `stderr`，删除 `except: pass`；`benches/tests/test_track_b.py` 新增映射命中、无 ingest 回退、未映射、更新失败 4 条用例。
+2. [x] **N2 数值口径收口**：`docs/compare.md` 的 Track A 控制组表用 `README.md` 参考运行实测值填充（aria add p99 13.35/4.08/0.02 并标注分段；sqlite_vec 0.04/0.04/0.05、Recall 0.9762；chromem 0.05/0.04/0.04、Recall 1.00），`agentmem` 标 `skipped`；脚注写明数据来源、分段不可比与 `benches/results/` 未入库，删除 `_run_` 占位。
+3. [x] **N3 分层老化编排入口**：`MemoManager::age(elapsed_sec) -> Result<usize>`（`<=0` → `InvalidParam`；按 tier 半衰期衰减、仅变化条目 `version+1` 并回写）；`memo/src/lib.rs` re-export `half_life_for` / `decay_importance_by_tier` / 三个半衰期常量；CLI 新增 `memo age --elapsed-sec <N> [--json]`（默认 `aged <n>`，JSON `{"aged": n, "elapsed_sec": N}`），含 commands 单测与二进制 e2e。
+5. [x] **`StorageBackend` 对齐规格 §2.2**：新增 `open(location)`（`where Self: Sized`）与原始记录 CRUD（`put_record` upsert / `get_record` / `delete_record` / `scan_records`）；`SqliteStore` 委托既有存储方法（`put_record` 先 `validate` 再 upsert），`ReplicatedBackend` 全部 fail closed（`MemoError::Other`）且 `open` 改为 `Result<Self>`；两处实现均补正常/异常单测。
+
+> 验证：`cargo fmt --all -- --check`、`cargo clippy --locked --workspace --all-targets -- -D warnings` 无告警；`cargo test --locked --workspace` 243 passed（含 7 条真实二进制 e2e）；`python3 -m unittest discover -s benches/tests -t benches` 56 passed。覆盖率复测（`cargo llvm-cov clean` 后）：Lines 6367/6367 = 100.00%、Functions 660/660 = 100.00%、Regions 97.83%。
+
 ## eMudhra / emSign 证书私钥泄露响应（2026-10）
 
 背景：eMudhra(emSign) 8 张中间 CA 私钥极弱（P-384 私钥标量 <256），可被反推伪造任意域名证书；

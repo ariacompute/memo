@@ -48,6 +48,21 @@ class FakeBackend(MemoBackend):
             self.store[0] = content
 
 
+class RecordingBackend(FakeBackend):
+    """FakeBackend that records update targets and can fail on demand."""
+
+    def __init__(self, supports_update=True, fail_update=False):
+        super().__init__(supports_update=supports_update)
+        self.updated = []
+        self._fail_update = fail_update
+
+    def update(self, memo_id: str, content=None, importance=None) -> None:
+        self.updated.append((memo_id, content))
+        if self._fail_update:
+            raise RuntimeError("backend rejected update")
+        super().update(memo_id, content, importance)
+
+
 class FakeJudge(Judge):
     def __init__(self, verdict=True):
         super().__init__(api_key="fake", model="fake-model", base_url="http://x")
@@ -100,6 +115,90 @@ class TestTrackB(unittest.TestCase):
         scores = mod.run(backend, ds, None, 5)
         upd = [s for s in scores if s.name == "update_accuracy"]
         self.assertTrue(upd and upd[0].skipped)
+
+    # ---------- memory updating: upstream MemoryID -> backend id addressing ----------
+
+    def _update_score(self, scores, name="update_accuracy"):
+        hits = [s for s in scores if s.name == name and s.subset == "updating"]
+        self.assertTrue(hits, f"expected an updating-subset {name} score")
+        return hits[0]
+
+    def _fixture_dataset(self, mod):
+        return mod.load(resolve_dataset("halumem").path, limit=2)
+
+    def test_halumem_update_uses_backend_id_mapping(self):
+        mod = __import__("track_b.halumem", fromlist=["load", "run"])
+        ds = self._fixture_dataset(mod)
+        backend = RecordingBackend()
+        scores = mod.run(backend, ds, None, 5)
+        score = self._update_score(scores)
+        # The update must target the id the backend generated at ingest time, not the
+        # upstream MemoryID (which the backend has never seen).
+        self.assertTrue(backend.updated, "update was never attempted")
+        target = backend.updated[0][0]
+        self.assertIn(target, backend.ids)
+        self.assertEqual(target, backend.ids[0])
+        self.assertNotEqual(target, str(ds.memories[0].get("MemoryID")))
+        self.assertEqual(score.value, 1.0)
+        self.assertIn("id_unmapped=0", score.reason)
+        self.assertIn("update_failed=0", score.reason)
+
+    def test_halumem_update_falls_back_to_list_memories_without_ingest(self):
+        mod = __import__("track_b.halumem", fromlist=["load", "run"])
+        backend = RecordingBackend()
+        backend.reset()
+        seeded = backend.add("The user lives in Berlin.")
+        ds = mod.Dataset(
+            memories=[{"MemoryID": 1, "Content": "The user lives in Berlin."}],
+            sessions=[],
+            questions=[
+                {
+                    "Question": "Where does the user live?",
+                    "Answer": ["Munich"],
+                    "UpdateMemoryID": 1,
+                    "UpdateType": "update",
+                }
+            ],
+        )
+        scores = mod.run(backend, ds, None, 5, do_ingest=False)
+        score = self._update_score(scores)
+        self.assertEqual(backend.updated[0][0], seeded)
+        self.assertEqual(score.value, 1.0)
+        self.assertIn("id_unmapped=0", score.reason)
+
+    def test_halumem_update_reports_unmapped_id(self):
+        mod = __import__("track_b.halumem", fromlist=["load", "run"])
+        backend = RecordingBackend()
+        ds = mod.Dataset(
+            memories=[{"MemoryID": 7, "Content": "The user lives in Berlin."}],
+            sessions=[],
+            questions=[
+                {
+                    "Question": "Where does the user live?",
+                    "Answer": ["Munich"],
+                    "UpdateMemoryID": 99,  # no such upstream memory
+                    "UpdateType": "update",
+                }
+            ],
+        )
+        scores = mod.run(backend, ds, None, 5)
+        score = self._update_score(scores)
+        self.assertEqual(score.value, 0.0)
+        self.assertIn("id_unmapped=1", score.reason)
+        self.assertIn("UpdateMemoryID=99", score.reason)
+        self.assertEqual(backend.updated, [])
+
+    def test_halumem_update_failure_is_reported_not_swallowed(self):
+        mod = __import__("track_b.halumem", fromlist=["load", "run"])
+        ds = self._fixture_dataset(mod)
+        backend = RecordingBackend(fail_update=True)
+        scores = mod.run(backend, ds, None, 5)
+        score = self._update_score(scores)
+        hallucination = self._update_score(scores, "hallucination_rate")
+        self.assertEqual(score.value, 0.0)
+        self.assertEqual(hallucination.value, 1.0)
+        self.assertIn("update_failed=1", score.reason)
+        self.assertIn("backend rejected update", score.reason)
 
     def test_dry_run_loads_all_benchmarks(self):
         backend = FakeBackend()
