@@ -72,6 +72,17 @@ fn stdout_text(out: &Output) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
+/// Run the binary inside `dir` (so relative defaults like `./memo.db` stay in the
+/// temp dir) with extra environment variables.
+fn run_in(dir: &std::path::Path, args: &[&str], envs: &[(&str, &str)]) -> Output {
+    let mut cmd = bin();
+    cmd.current_dir(dir).args(args);
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    cmd.output().expect("run aria-memo")
+}
+
 #[test]
 fn version_exits_zero() {
     // `--version` prints the bare version number (clap's Version action).
@@ -244,6 +255,243 @@ fn aging_decays_importance_across_processes() {
     let out = db.run(&["age", "--elapsed-sec=-1"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("error:"));
+}
+
+#[test]
+fn search_batch_and_typed_list_across_processes() {
+    let db = TempDb::new("batch");
+    let rust = db
+        .ok(&[
+            "add",
+            "--type",
+            "short_term",
+            "--content",
+            "rust async runtime tokio",
+            "--importance",
+            "0.9",
+        ])
+        .trim()
+        .to_string();
+    let sql = db
+        .ok(&[
+            "add",
+            "--type",
+            "working",
+            "--content",
+            "sqlite fts5 bm25 indexing",
+            "--importance",
+            "0.7",
+        ])
+        .trim()
+        .to_string();
+    let food = db
+        .ok(&[
+            "add",
+            "--type",
+            "working",
+            "--content",
+            "banana smoothie with ice",
+            "--importance",
+            "0.2",
+        ])
+        .trim()
+        .to_string();
+
+    // `search-batch` keeps one result group per query, in argument order.
+    let batch = db.json(&[
+        "search-batch",
+        "--text",
+        "sqlite fts5 ranking",
+        "--text",
+        "banana smoothie",
+        "--top-k",
+        "2",
+        "--json",
+    ]);
+    let groups = batch.as_array().expect("batch array");
+    assert_eq!(groups.len(), 2);
+    assert_eq!(groups[0]["query"], "sqlite fts5 ranking");
+    assert!(groups[0]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["id"] == sql.as_str()));
+    assert_eq!(groups[1]["query"], "banana smoothie");
+    assert!(groups[1]["results"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|r| r["id"] == food.as_str()));
+
+    // `list --type` filters persisted rows, not just in-memory ones.
+    let short = db.json(&["list", "--type", "short_term", "--json"]);
+    let rows = short.as_array().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["id"], rust.as_str());
+
+    // `recall` is pure vector recall, so the semantically closest row must win.
+    let recall = db.json(&[
+        "recall",
+        "--text",
+        "rust tokio async",
+        "--top-k",
+        "1",
+        "--json",
+    ]);
+    assert_eq!(recall[0]["id"], rust.as_str());
+}
+
+#[test]
+fn bench_reports_segments_across_processes() {
+    let db = TempDb::new("bench");
+    let full = db.json(&[
+        "bench", "--size", "4", "--warmup", "1", "--top-k", "2", "--json",
+    ]);
+    assert_eq!(full["system"], "aria-memo");
+    assert_eq!(full["size"], 4);
+    assert_eq!(full["offline"], true);
+    assert!(full["add_baseline"]["p50_ms"].as_f64().unwrap() >= 0.0);
+    assert!(full["search"]["ops_per_sec"].as_f64().unwrap() > 0.0);
+
+    // `--no-baseline --batch` reports only the requested segments.
+    let light = db.json(&[
+        "bench",
+        "--size",
+        "4",
+        "--warmup",
+        "1",
+        "--top-k",
+        "2",
+        "--batch",
+        "--no-baseline",
+        "--json",
+    ]);
+    assert!(light.get("add_baseline").is_none());
+    assert!(light["batch"]["total_ms"].as_f64().unwrap() >= 0.0);
+    assert!(light["search"]["p99_ms"].as_f64().unwrap() >= 0.0);
+
+    // Invalid parameters are rejected before any write happens.
+    let out = db.run(&["bench", "--size", "0"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("bench size must be > 0"));
+}
+
+#[test]
+fn unicode_and_option_like_content_across_processes() {
+    let db = TempDb::new("unicode");
+    // `--content=<value>` keeps a leading dash from being parsed as a flag.
+    let dash = db
+        .ok(&[
+            "add",
+            "--type",
+            "working",
+            "--content=-dash-prefixed note about rust",
+        ])
+        .trim()
+        .to_string();
+    assert!(!dash.is_empty());
+    let cjk = db
+        .ok(&[
+            "add",
+            "--type",
+            "long_term:semantic",
+            "--content",
+            "用户喜欢用 Rust 写系统程序",
+        ])
+        .trim()
+        .to_string();
+
+    // CJK segmentation feeds the lexical FTS5 branch end-to-end.
+    let hits = db.json(&["search", "--text", "系统程序", "--top-k", "5", "--json"]);
+    assert!(hits
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|h| h["id"] == cjk.as_str()));
+
+    // `get` dumps the canonical record, so non-ASCII content round-trips exactly.
+    let got = db.json(&["get", "--id", &cjk]);
+    assert_eq!(got["content"], "用户喜欢用 Rust 写系统程序");
+    assert_eq!(got["memo_type"]["LongTerm"]["kind"], "Semantic");
+
+    // A missing id is a normal answer (exit 0 + `not found`), not a failure.
+    let out = db.run(&["get", "--id", "missing"]);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(stdout_text(&out).trim(), "not found");
+}
+
+#[test]
+fn default_database_path_is_created_in_cwd() {
+    let db = TempDb::new("default-db");
+    let add = run_in(
+        &db.dir,
+        &[
+            "add",
+            "--type",
+            "working",
+            "--content",
+            "default path probe",
+        ],
+        &[],
+    );
+    assert!(
+        add.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    // `--db` defaults to `./memo.db`, resolved against the process cwd.
+    assert!(db.dir.join("memo.db").exists());
+
+    let list = run_in(&db.dir, &["list", "--json"], &[]);
+    assert!(list.status.success());
+    assert!(stdout_text(&list).contains("default path probe"));
+}
+
+#[test]
+fn setup_config_lifecycle_under_override_home() {
+    let db = TempDb::new("setup");
+    let home = db.dir.to_string_lossy().into_owned();
+    let home_env: &[(&str, &str)] = &[("ARIA_COMPUTE_HOME", home.as_str())];
+
+    // A fresh override home has no config yet.
+    let status = run_in(&db.dir, &["setup", "--status"], home_env);
+    assert!(status.status.success());
+    let text = stdout_text(&status);
+    assert!(text.contains("memo-cli.yml"), "stdout: {text}");
+    assert!(text.contains("missing"), "stdout: {text}");
+
+    // Non-interactive: the site variable decides the upgrade source, no prompt.
+    let write = run_in(
+        &db.dir,
+        &["setup"],
+        &[
+            ("ARIA_COMPUTE_HOME", home.as_str()),
+            ("ARIA_MEMO_SITE", "cn"),
+        ],
+    );
+    assert!(
+        write.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&write.stderr)
+    );
+    assert!(stdout_text(&write).contains("wrote"));
+    let config_path = db.dir.join("memo-cli.yml");
+    assert!(config_path.exists());
+    assert!(fs::read_to_string(&config_path)
+        .unwrap()
+        .contains("gitee.com"));
+
+    let status = run_in(&db.dir, &["setup", "--status"], home_env);
+    assert!(stdout_text(&status).contains("upgrade_url: https://gitee.com/ariacompute"));
+
+    // `--clear` removes the file; a second run is a no-op, not an error.
+    let clear = run_in(&db.dir, &["setup", "--clear"], home_env);
+    assert!(clear.status.success());
+    assert!(stdout_text(&clear).contains("cleared"));
+    assert!(!config_path.exists());
+    let again = run_in(&db.dir, &["setup", "--clear"], home_env);
+    assert!(again.status.success());
+    assert!(stdout_text(&again).contains("nothing to clear"));
 }
 
 #[test]

@@ -129,7 +129,7 @@
 64. [x] 死分支清理：删除可证明不可达的守卫与重复校验（如 `lindera_tokens` 的错误映射改为 `unwrap_or_default()`），不引入 `#[coverage(off)]`；真实 stdin/stdout 与网络出口保留为薄包装
 65. [x] 新增 `.github/workflows/ci.yml`：push(main)/PR 触发 → `cargo fmt --all -- --check` → `cargo clippy --locked --workspace --all-targets -- -D warnings` → `cargo test --locked --workspace` → `python -m unittest discover -s benches/tests -t benches`；ci/release 另配 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` + `actions/cache`；不设覆盖率阈值
 66. [x] 验收（`cargo llvm-cov 0.9.1` 实测，先用 `scripts/prefetch-lindera.sh` 预热缓存）：Lines 6153/6153 = 100.00%（missed 0）、Functions 638/638 = 100.00%（missed 0）；Regions 7967 total / 175 missed = 97.80%（不作门禁）；Rust 与 Python 门禁本地全绿
-67. [x] E2E：`crates/cli/tests/cli_binary.rs` 驱动真实二进制 + 唯一临时 DB，覆盖 version/退出码、`add`→`get`→`search`→`recall`→`list`→`update`→`forget`、`relate`→`relations`→`graph`/`search --graph` 与非法输入退出码（6 项，随 `cargo test --workspace` 执行）
+67. [x] E2E：`crates/cli/tests/cli_binary.rs` 驱动真实二进制 + 唯一临时 DB，覆盖 version/退出码、`add`→`get`→`search`→`recall`→`list`→`update`→`forget`、`search-batch`/`list --type`、`age`（空库 / 正常衰减 / 非法 `--elapsed-sec`）、`relate`/`connect`→`relations`→`graph`/`search --graph`、`bench`（分段报告 + `--no-baseline --batch`）、CJK 分词检索与破折号开头内容、`./memo.db` 默认路径、`setup`（`ARIA_COMPUTE_HOME` 覆盖下 status→write→clear）与非法输入退出码（12 项，随 `cargo test --workspace` 执行）
 
 ### M8
 - 覆盖率仅本地自查：`LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov clean --workspace && LINDERA_BUILD_DICTIONARY_CACHE_DIR=<cache> cargo llvm-cov --workspace --summary-only --show-missing-lines`（先 clean，避免旧 profdata 串味；缓存由 `scripts/prefetch-lindera.sh` 预热）。
@@ -159,7 +159,9 @@
 
 6. [x] **补测（行为优先，不迎合 Region 指标）**：`age` 的 ShortTerm 半衰期、空库、负数与 `= -1` 解析、二次衰减；`relations --kind` 未知值严格报错；`graph` 的 budget / max_hops = 0 拒绝；`StorageBackend::put_record` 的 importance 越界拒绝；HaluMem 在 `list_memories` 抛错时的降级（`id_unmapped` + `stderr`）；`graph_bfs` 循环用例的 `stop_reason` 由宽松 `||` 断言收紧为确定值。
 
-> 验证（本轮补测后）：`cargo fmt --all -- --check`、`cargo clippy --locked --workspace --all-targets -- -D warnings` 无告警；`cargo test --locked --workspace` 246 passed（含 7 条真实二进制 e2e）；`python3 -m unittest discover -s benches/tests -t benches` 57 passed。覆盖率（`cargo llvm-cov clean` 后）：Lines 6395/6395 = 100.00%、Functions 663/663 = 100.00%、Regions 8322 total / 176 missed = 97.89%。剩余未覆盖区域几乎全部是 `?` 的错误返回边——只有人为注入 DB / IO / HTTP 故障才能触达，接入 CI 的只有 Lines/Functions（Regions 不作门禁）。
+7. [x] **补 e2e（真实二进制多进程）**：由 6 条扩到 12 条 —— 新增 `search-batch`/`list --type` 对齐、`bench` 分段与 `--no-baseline --batch`、CJK 分词检索 + 破折号开头内容（`--content=`）+ `get` 缺失 id 语义、`./memo.db` 默认路径、`setup` 在 `ARIA_COMPUTE_HOME` 覆盖下的 status→write→clear 生命周期；同时修正文档中「`get` 支持 `--json`」的表述（`get` 无开关、始终输出完整记录 JSON）。
+
+> 验证（本轮补测后）：`cargo fmt --all -- --check`、`cargo clippy --locked --workspace --all-targets -- -D warnings` 无告警；`cargo test --locked --workspace` 251 passed（含 12 条真实二进制 e2e）；`python3 -m unittest discover -s benches/tests -t benches` 57 passed。覆盖率（`cargo llvm-cov clean` 后）：Lines 6395/6395 = 100.00%、Functions 663/663 = 100.00%、Regions 8322 total / 176 missed = 97.89%。剩余未覆盖区域几乎全部是 `?` 的错误返回边——只有人为注入 DB / IO / HTTP 故障才能触达，接入 CI 的只有 Lines/Functions（Regions 不作门禁）。
 
 ## eMudhra / emSign 证书私钥泄露响应（2026-10）
 
