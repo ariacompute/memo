@@ -779,6 +779,18 @@ mod tests {
     }
 
     #[test]
+    fn age_uses_short_term_half_life() {
+        let m = mgr();
+        m.store
+            .add(&typed_memo("s", "short", 1.0, MemoType::ShortTerm))
+            .unwrap();
+        // Exactly one ShortTerm half-life (7 days) -> importance halves.
+        assert_eq!(m.age(7 * 24 * 60 * 60).unwrap(), 1);
+        let s = m.get(&"s".to_string()).unwrap().unwrap();
+        assert!((s.importance - 0.5).abs() < 1e-6, "{}", s.importance);
+    }
+
+    #[test]
     fn age_rejects_non_positive_elapsed() {
         let m = mgr();
         assert!(matches!(m.age(0), Err(MemoError::InvalidParam(_))));

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import sys
 import unittest
 from pathlib import Path
@@ -51,10 +53,16 @@ class FakeBackend(MemoBackend):
 class RecordingBackend(FakeBackend):
     """FakeBackend that records update targets and can fail on demand."""
 
-    def __init__(self, supports_update=True, fail_update=False):
+    def __init__(self, supports_update=True, fail_update=False, fail_list=False):
         super().__init__(supports_update=supports_update)
         self.updated = []
         self._fail_update = fail_update
+        self._fail_list = fail_list
+
+    def list_memories(self) -> list[SearchHit]:
+        if self._fail_list:
+            raise RuntimeError("list_memories unavailable")
+        return super().list_memories()
 
     def update(self, memo_id: str, content=None, importance=None) -> None:
         self.updated.append((memo_id, content))
@@ -199,6 +207,31 @@ class TestTrackB(unittest.TestCase):
         self.assertEqual(hallucination.value, 1.0)
         self.assertIn("update_failed=1", score.reason)
         self.assertIn("backend rejected update", score.reason)
+
+    def test_halumem_update_degrades_when_list_memories_fails(self):
+        mod = __import__("track_b.halumem", fromlist=["load", "run"])
+        backend = RecordingBackend(fail_list=True)
+        ds = mod.Dataset(
+            memories=[{"MemoryID": 1, "Content": "The user lives in Berlin."}],
+            sessions=[],
+            questions=[
+                {
+                    "Question": "Where does the user live?",
+                    "Answer": ["Munich"],
+                    "UpdateMemoryID": 1,
+                    "UpdateType": "update",
+                }
+            ],
+        )
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            scores = mod.run(backend, ds, None, 5, do_ingest=False)
+        score = self._update_score(scores)
+        # The fallback cannot resolve the id, but it must degrade loudly, not crash.
+        self.assertEqual(score.value, 0.0)
+        self.assertIn("id_unmapped=1", score.reason)
+        self.assertEqual(backend.updated, [])
+        self.assertIn("list_memories failed", err.getvalue())
 
     def test_dry_run_loads_all_benchmarks(self):
         backend = FakeBackend()

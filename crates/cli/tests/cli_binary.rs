@@ -198,6 +198,8 @@ fn full_memory_lifecycle_across_processes() {
 #[test]
 fn aging_decays_importance_across_processes() {
     let db = TempDb::new("age");
+    // An empty database ages nothing but still reports a count.
+    assert_eq!(db.ok(&["age", "--elapsed-sec", "3600"]).trim(), "aged 0");
     let working = db
         .ok(&[
             "add",
@@ -233,8 +235,13 @@ fn aging_decays_importance_across_processes() {
     let human = db.ok(&["age", "--elapsed-sec", "3600"]);
     assert!(human.trim().starts_with("aged "), "stdout: {human}");
 
-    // Non-positive elapsed must fail loudly (exit 1 + `error:` on stderr).
+    // Zero elapsed is a runtime error (exit 1 + `error:` on stderr).
     let out = db.run(&["age", "--elapsed-sec", "0"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("error:"));
+    // A negative value needs the `=` form (otherwise clap reads it as a flag and reports
+    // a usage error); the runtime guard then rejects it instead of silently clamping.
+    let out = db.run(&["age", "--elapsed-sec=-1"]);
     assert_eq!(out.status.code(), Some(1));
     assert!(String::from_utf8_lossy(&out.stderr).contains("error:"));
 }

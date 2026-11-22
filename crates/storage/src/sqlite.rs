@@ -1312,6 +1312,13 @@ mod tests {
             Err(MemoError::EmptyContent)
         ));
         assert!(s.get_record(&"c".into()).unwrap().is_none());
+        let mut bad_importance = mem("d", "bad importance", None);
+        bad_importance.importance = 1.5;
+        assert!(matches!(
+            s.put_record(&bad_importance),
+            Err(MemoError::InvalidParam(_))
+        ));
+        assert!(s.get_record(&"d".into()).unwrap().is_none());
 
         // Delete reports whether a record was actually removed.
         assert!(s.delete_record(&"a".into()).unwrap());

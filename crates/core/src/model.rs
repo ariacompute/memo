@@ -860,8 +860,9 @@ mod relation_tests {
         assert!(ids.contains(&&"a".to_string()));
         assert!(ids.contains(&&"b".to_string()));
         assert!(ids.contains(&&"c".to_string()));
-        // Cycle must not cause infinite expansion; the best-score map skips the lower path back to a.
-        assert!(stop == "exhausted" || stop == "budget");
+        // Cycle must not cause infinite expansion; the best-score map skips the lower path
+        // back to `a`. Budget 10 is never hit with three nodes, so the run must exhaust.
+        assert_eq!(stop, "exhausted");
         // Seed keeps highest score.
         assert_eq!(out[0].0, "a");
     }

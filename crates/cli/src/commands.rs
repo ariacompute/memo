@@ -682,6 +682,20 @@ mod tests {
     }
 
     #[test]
+    fn cli_graph_retrieve_rejects_zero_budget_or_hops() {
+        let m = mgr();
+        add(&m, "working", "rust systems programming", 0.8).unwrap();
+        assert!(matches!(
+            graph_retrieve(&m, "rust", "", 0, 3, 5, true),
+            Err(MemoError::InvalidParam(_))
+        ));
+        assert!(matches!(
+            graph_retrieve(&m, "rust", "", 20, 0, 5, true),
+            Err(MemoError::InvalidParam(_))
+        ));
+    }
+
+    #[test]
     fn cli_list_and_search_json() {
         let m = mgr();
         let id = add(&m, "working", "user likes rust", 0.8).unwrap();
@@ -912,6 +926,17 @@ mod tests {
                 .len(),
             1
         );
+    }
+
+    #[test]
+    fn cli_relations_rejects_unknown_kind() {
+        let m = mgr();
+        let id = add(&m, "working", "alpha about rust", 0.8).unwrap();
+        // Same strict contract as `--type` / `--views`: an unknown kind errors out.
+        assert!(matches!(
+            relations(&m, Some(&id), None, Some("bogus"), 10, false),
+            Err(MemoError::InvalidParam(_))
+        ));
     }
 
     #[test]

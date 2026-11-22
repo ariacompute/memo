@@ -157,7 +157,9 @@
 3. [x] **N3 分层老化编排入口**：`MemoManager::age(elapsed_sec) -> Result<usize>`（`<=0` → `InvalidParam`；按 tier 半衰期衰减、仅变化条目 `version+1` 并回写）；`memo/src/lib.rs` re-export `half_life_for` / `decay_importance_by_tier` / 三个半衰期常量；CLI 新增 `memo age --elapsed-sec <N> [--json]`（默认 `aged <n>`，JSON `{"aged": n, "elapsed_sec": N}`），含 commands 单测与二进制 e2e。
 5. [x] **`StorageBackend` 对齐规格 §2.2**：新增 `open(location)`（`where Self: Sized`）与原始记录 CRUD（`put_record` upsert / `get_record` / `delete_record` / `scan_records`）；`SqliteStore` 委托既有存储方法（`put_record` 先 `validate` 再 upsert），`ReplicatedBackend` 全部 fail closed（`MemoError::Other`）且 `open` 改为 `Result<Self>`；两处实现均补正常/异常单测。
 
-> 验证：`cargo fmt --all -- --check`、`cargo clippy --locked --workspace --all-targets -- -D warnings` 无告警；`cargo test --locked --workspace` 243 passed（含 7 条真实二进制 e2e）；`python3 -m unittest discover -s benches/tests -t benches` 56 passed。覆盖率复测（`cargo llvm-cov clean` 后）：Lines 6367/6367 = 100.00%、Functions 660/660 = 100.00%、Regions 97.83%。
+6. [x] **补测（行为优先，不迎合 Region 指标）**：`age` 的 ShortTerm 半衰期、空库、负数与 `= -1` 解析、二次衰减；`relations --kind` 未知值严格报错；`graph` 的 budget / max_hops = 0 拒绝；`StorageBackend::put_record` 的 importance 越界拒绝；HaluMem 在 `list_memories` 抛错时的降级（`id_unmapped` + `stderr`）；`graph_bfs` 循环用例的 `stop_reason` 由宽松 `||` 断言收紧为确定值。
+
+> 验证（本轮补测后）：`cargo fmt --all -- --check`、`cargo clippy --locked --workspace --all-targets -- -D warnings` 无告警；`cargo test --locked --workspace` 246 passed（含 7 条真实二进制 e2e）；`python3 -m unittest discover -s benches/tests -t benches` 57 passed。覆盖率（`cargo llvm-cov clean` 后）：Lines 6395/6395 = 100.00%、Functions 663/663 = 100.00%、Regions 8322 total / 176 missed = 97.89%。剩余未覆盖区域几乎全部是 `?` 的错误返回边——只有人为注入 DB / IO / HTTP 故障才能触达，接入 CI 的只有 Lines/Functions（Regions 不作门禁）。
 
 ## eMudhra / emSign 证书私钥泄露响应（2026-10）
 
