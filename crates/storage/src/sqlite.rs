@@ -317,11 +317,33 @@ impl SqliteStore {
 }
 
 impl StorageBackend for SqliteStore {
+    fn open(location: &str) -> Result<Self> {
+        // Fully qualified on purpose: an unqualified call would resolve to this
+        // trait method and recurse forever.
+        SqliteStore::open(location)
+    }
     fn migrate(&self) -> Result<()> {
         self.migrate()
     }
     fn backend_kind(&self) -> &'static str {
         "sqlite"
+    }
+    fn put_record(&self, memo: &Memo) -> Result<()> {
+        memo.validate()?;
+        if self.get(&memo.id)?.is_some() {
+            self.update(memo)
+        } else {
+            self.add(memo)
+        }
+    }
+    fn get_record(&self, id: &MemoId) -> Result<Option<Memo>> {
+        self.get(id)
+    }
+    fn delete_record(&self, id: &MemoId) -> Result<bool> {
+        self.forget(id)
+    }
+    fn scan_records(&self) -> Result<Vec<Memo>> {
+        self.list(None)
     }
 }
 
@@ -1262,6 +1284,39 @@ mod tests {
     fn backend_kind_is_sqlite() {
         let s = SqliteStore::open(":memory:").unwrap();
         assert_eq!(s.backend_kind(), "sqlite");
+    }
+
+    #[test]
+    fn storage_backend_raw_record_crud() {
+        // `open` must delegate to the inherent constructor (no recursion) and migrate.
+        let s = <SqliteStore as StorageBackend>::open(":memory:").unwrap();
+        assert!(s.scan_records().unwrap().is_empty());
+        assert_eq!(s.backend_kind(), "sqlite");
+
+        // put_record inserts when absent and upserts when present.
+        s.put_record(&mem("a", "first", None)).unwrap();
+        s.put_record(&mem("b", "second", None)).unwrap();
+        assert_eq!(s.scan_records().unwrap().len(), 2);
+        let mut upserted = mem("a", "updated", None);
+        upserted.version = 2;
+        s.put_record(&upserted).unwrap();
+        assert_eq!(
+            s.get_record(&"a".into()).unwrap().unwrap().content,
+            "updated"
+        );
+        assert_eq!(s.scan_records().unwrap().len(), 2);
+
+        // Invalid records are rejected before any write.
+        assert!(matches!(
+            s.put_record(&mem("c", "   ", None)),
+            Err(MemoError::EmptyContent)
+        ));
+        assert!(s.get_record(&"c".into()).unwrap().is_none());
+
+        // Delete reports whether a record was actually removed.
+        assert!(s.delete_record(&"a".into()).unwrap());
+        assert!(!s.delete_record(&"a".into()).unwrap());
+        assert!(s.get_record(&"a".into()).unwrap().is_none());
     }
 
     #[test]

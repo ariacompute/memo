@@ -75,11 +75,35 @@ pub trait Embedder: Send + Sync {
 
 /// Low-level persistence backend abstraction (M1 only implements SQLite; a replicated
 /// backend is a later milestone, inspired by rqlite).
+///
+/// This is the replication/sync extension point: open + migrate + raw record CRUD over
+/// whole [`Memo`] values. Semantic operations (hybrid search, relations, graph
+/// expansion) stay on [`MemoStore`], so a replicated backend can move records without
+/// re-implementing retrieval semantics.
 pub trait StorageBackend: Send + Sync {
+    /// Open (or create) the backend at `location`. Static, so it never affects the
+    /// object safety of the remaining methods.
+    fn open(location: &str) -> Result<Self>
+    where
+        Self: Sized;
+
     /// Run schema creation/migration.
     fn migrate(&self) -> Result<()>;
+
     /// Backend kind identifier.
     fn backend_kind(&self) -> &'static str;
+
+    /// Raw upsert of one whole record by id (insert when absent, replace when present).
+    fn put_record(&self, memo: &Memo) -> Result<()>;
+
+    /// Raw read of one record by id; `None` when absent.
+    fn get_record(&self, id: &MemoId) -> Result<Option<Memo>>;
+
+    /// Raw delete by id; returns whether a record was actually removed.
+    fn delete_record(&self, id: &MemoId) -> Result<bool>;
+
+    /// Raw full scan (replication snapshots); unordered.
+    fn scan_records(&self) -> Result<Vec<Memo>>;
 }
 
 #[cfg(test)]

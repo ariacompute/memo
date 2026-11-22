@@ -1,4 +1,4 @@
-use memo_core::{MemoError, Result, StorageBackend};
+use memo_core::{Memo, MemoError, MemoId, Result, StorageBackend};
 
 /// Backend kind identifier.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -34,16 +34,18 @@ impl std::str::FromStr for BackendKind {
 /// A real implementation would replicate memories across edge nodes via Raft; deferred to a later milestone.
 pub struct ReplicatedBackend;
 
+fn not_implemented() -> MemoError {
+    MemoError::Other("replicated backend not implemented in M1".into())
+}
+
 impl ReplicatedBackend {
     pub fn new() -> Self {
         Self
     }
 
     /// Unimplemented in M1: returns an `Other` error when called.
-    pub fn open(_location: &str) -> Result<()> {
-        Err(MemoError::Other(
-            "replicated backend not implemented in M1".into(),
-        ))
+    pub fn open(_location: &str) -> Result<Self> {
+        Err(not_implemented())
     }
 }
 
@@ -54,13 +56,27 @@ impl Default for ReplicatedBackend {
 }
 
 impl StorageBackend for ReplicatedBackend {
+    fn open(location: &str) -> Result<Self> {
+        // Fully qualified: the inherent constructor is the single source of truth.
+        ReplicatedBackend::open(location)
+    }
     fn migrate(&self) -> Result<()> {
-        Err(MemoError::Other(
-            "replicated backend not implemented in M1".into(),
-        ))
+        Err(not_implemented())
     }
     fn backend_kind(&self) -> &'static str {
         BackendKind::Replicated.as_str()
+    }
+    fn put_record(&self, _memo: &Memo) -> Result<()> {
+        Err(not_implemented())
+    }
+    fn get_record(&self, _id: &MemoId) -> Result<Option<Memo>> {
+        Err(not_implemented())
+    }
+    fn delete_record(&self, _id: &MemoId) -> Result<bool> {
+        Err(not_implemented())
+    }
+    fn scan_records(&self) -> Result<Vec<Memo>> {
+        Err(not_implemented())
     }
 }
 
@@ -76,6 +92,35 @@ mod tests {
             ReplicatedBackend::new().backend_kind(),
             BackendKind::Replicated.as_str()
         );
+    }
+
+    #[test]
+    fn replicated_backend_raw_crud_fails_closed() {
+        let rb = ReplicatedBackend::new();
+        let memo = Memo {
+            id: "a".into(),
+            memo_type: memo_core::MemoType::Working,
+            content: "x".into(),
+            embedding: None,
+            metadata: Default::default(),
+            importance: 0.5,
+            version: 1,
+            created_at: 1,
+            updated_at: 1,
+        };
+        // Every raw-CRUD entry point must report `Other` instead of a silent no-op.
+        assert!(matches!(rb.put_record(&memo), Err(MemoError::Other(_))));
+        assert!(matches!(
+            rb.get_record(&"a".to_string()),
+            Err(MemoError::Other(_))
+        ));
+        assert!(matches!(
+            rb.delete_record(&"a".to_string()),
+            Err(MemoError::Other(_))
+        ));
+        assert!(matches!(rb.scan_records(), Err(MemoError::Other(_))));
+        // The trait constructor fails closed too.
+        assert!(<ReplicatedBackend as StorageBackend>::open("any").is_err());
     }
 
     #[test]
