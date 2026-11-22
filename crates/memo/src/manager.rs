@@ -1,3 +1,4 @@
+use crate::lifecycle::decay_importance_by_tier;
 use memo_core::*;
 use memo_embed::cosine;
 use memo_storage::SqliteStore;
@@ -219,6 +220,28 @@ impl MemoManager {
         m.version += 1;
         m.updated_at = now_secs();
         self.store.update(&m)
+    }
+
+    /// Layered aging: decay every memory's importance by the half-life implied by its
+    /// tier (Working 1h / ShortTerm 7d / LongTerm 30d) and persist the result.
+    /// Returns how many memories actually changed. `elapsed_sec` must be > 0.
+    pub fn age(&self, elapsed_sec: i64) -> Result<usize> {
+        if elapsed_sec <= 0 {
+            return Err(MemoError::InvalidParam("elapsed_sec must be > 0".into()));
+        }
+        let mut aged = 0;
+        for mut m in self.store.list(None)? {
+            let before = m.importance;
+            decay_importance_by_tier(&mut m, elapsed_sec);
+            if (m.importance - before).abs() <= f32::EPSILON {
+                continue;
+            }
+            m.version += 1;
+            m.updated_at = now_secs();
+            self.store.update(&m)?;
+            aged += 1;
+        }
+        Ok(aged)
     }
 
     /// Deduplicate: memories with similarity >= threshold are merged into the kept item
@@ -692,6 +715,80 @@ mod tests {
         assert!((m.get(&id).unwrap().unwrap().importance - 1.0).abs() < 1e-6);
         m.consolidate(&id, -5.0).unwrap();
         assert!((m.get(&id).unwrap().unwrap().importance).abs() < 1e-6);
+    }
+
+    fn typed_memo(id: &str, content: &str, importance: f32, memo_type: MemoType) -> Memo {
+        Memo {
+            id: id.into(),
+            memo_type,
+            content: content.into(),
+            embedding: None,
+            metadata: HashMap::new(),
+            importance,
+            version: 1,
+            created_at: 1,
+            updated_at: 1,
+        }
+    }
+
+    #[test]
+    fn age_decays_by_tier_and_counts_only_changed() {
+        let m = mgr();
+        m.store
+            .add(&typed_memo("w", "working", 1.0, MemoType::Working))
+            .unwrap();
+        m.store
+            .add(&typed_memo("s", "short", 1.0, MemoType::ShortTerm))
+            .unwrap();
+        m.store
+            .add(&typed_memo(
+                "l",
+                "long",
+                1.0,
+                MemoType::LongTerm {
+                    kind: LongTermKind::Semantic,
+                },
+            ))
+            .unwrap();
+        // Already-zero importance never changes, so it must not be counted.
+        m.store
+            .add(&typed_memo("z", "zero", 0.0, MemoType::Working))
+            .unwrap();
+
+        // One Working half-life: Working halves, the slower tiers barely move.
+        let aged = m.age(60 * 60).unwrap();
+        assert_eq!(aged, 3);
+
+        let w = m.get(&"w".to_string()).unwrap().unwrap();
+        assert!((w.importance - 0.5).abs() < 1e-6);
+        assert_eq!(w.version, 2);
+        let s = m.get(&"s".to_string()).unwrap().unwrap();
+        assert!(
+            s.importance > 0.99 && s.importance < 1.0,
+            "{}",
+            s.importance
+        );
+        let l = m.get(&"l".to_string()).unwrap().unwrap();
+        assert!(
+            l.importance > s.importance,
+            "tiers must age at different rates"
+        );
+        let z = m.get(&"z".to_string()).unwrap().unwrap();
+        assert_eq!(z.importance, 0.0);
+        assert_eq!(z.version, 1);
+    }
+
+    #[test]
+    fn age_rejects_non_positive_elapsed() {
+        let m = mgr();
+        assert!(matches!(m.age(0), Err(MemoError::InvalidParam(_))));
+        assert!(matches!(m.age(-5), Err(MemoError::InvalidParam(_))));
+    }
+
+    #[test]
+    fn age_empty_store_is_noop() {
+        let m = mgr();
+        assert_eq!(m.age(3600).unwrap(), 0);
     }
 
     #[test]

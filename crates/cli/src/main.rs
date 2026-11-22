@@ -157,6 +157,15 @@ enum Command {
         #[arg(long, default_value_t = false)]
         json: bool,
     },
+    /// Layered aging: decay importance using each memory's tier half-life
+    Age {
+        /// Elapsed seconds since the last aging pass (must be > 0)
+        #[arg(long)]
+        elapsed_sec: i64,
+        /// Machine-readable JSON output (`aged` / `elapsed_sec`)
+        #[arg(long, default_value_t = false)]
+        json: bool,
+    },
     /// In-process micro-benchmark (JSON), parsed by benches/
     Bench {
         /// Number of writes and searches (corpus size)
@@ -344,6 +353,9 @@ fn run(cli: Cli) -> Result<()> {
                 commands::graph_retrieve(store(), &text, &views, budget, max_hops, top_k, json)?
             );
         }
+        Command::Age { elapsed_sec, json } => {
+            println!("{}", commands::age(store(), elapsed_sec, json)?);
+        }
     }
     Ok(())
 }
@@ -423,6 +435,55 @@ mod tests {
     fn version_command_prints_and_succeeds() {
         run(cli(":memory:", Command::Version)).unwrap();
         assert_eq!(entry(["aria-memo", "version"]), 0);
+    }
+
+    #[test]
+    fn setup_status_is_wired_through_run() {
+        // `--status` is read-only, and the memory store must stay lazy (no DB opened).
+        run(cli(
+            ":memory:",
+            Command::Setup(Box::new(crate::setup::SetupArgs {
+                status: true,
+                clear: false,
+            })),
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn age_command_is_wired_through_run() {
+        let db = Db::new("main-age");
+        let d = db.path.as_str();
+        run(cli(
+            d,
+            Command::Add {
+                r#type: "working".into(),
+                content: "cli aging probe".into(),
+                importance: 1.0,
+            },
+        ))
+        .unwrap();
+        // Both output shapes go through `run`; each Working half-life halves importance.
+        run(cli(
+            d,
+            Command::Age {
+                elapsed_sec: 3600,
+                json: true,
+            },
+        ))
+        .unwrap();
+        run(cli(
+            d,
+            Command::Age {
+                elapsed_sec: 3600,
+                json: false,
+            },
+        ))
+        .unwrap();
+        let memos = build_manager(d).list(None).unwrap();
+        assert_eq!(memos.len(), 1);
+        assert!((memos[0].importance - 0.25).abs() < 1e-6);
+        assert_eq!(memos[0].version, 3);
     }
 
     #[test]

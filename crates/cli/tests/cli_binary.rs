@@ -196,6 +196,50 @@ fn full_memory_lifecycle_across_processes() {
 }
 
 #[test]
+fn aging_decays_importance_across_processes() {
+    let db = TempDb::new("age");
+    let working = db
+        .ok(&[
+            "add",
+            "--type",
+            "working",
+            "--content",
+            "fresh working memory",
+            "--importance",
+            "1.0",
+        ])
+        .trim()
+        .to_string();
+    db.ok(&[
+        "add",
+        "--type",
+        "long_term:semantic",
+        "--content",
+        "durable semantic memory",
+        "--importance",
+        "1.0",
+    ]);
+
+    // One Working half-life: the Working memory halves, the LongTerm one barely moves
+    // but is still counted as aged.
+    let aged = db.json(&["age", "--elapsed-sec", "3600", "--json"]);
+    assert_eq!(aged["aged"], 2);
+    assert_eq!(aged["elapsed_sec"], 3600);
+    let got = db.json(&["get", "--id", &working]);
+    assert!((got["importance"].as_f64().unwrap() - 0.5).abs() < 1e-6);
+    assert_eq!(got["version"], 2);
+
+    // Default human-readable output stays `aged <n>`.
+    let human = db.ok(&["age", "--elapsed-sec", "3600"]);
+    assert!(human.trim().starts_with("aged "), "stdout: {human}");
+
+    // Non-positive elapsed must fail loudly (exit 1 + `error:` on stderr).
+    let out = db.run(&["age", "--elapsed-sec", "0"]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("error:"));
+}
+
+#[test]
 fn relation_and_graph_flow_across_processes() {
     let db = TempDb::new("graph");
     let a = db

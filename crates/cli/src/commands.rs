@@ -142,6 +142,18 @@ pub fn forget(manager: &MemoManager, id: &str) -> Result<String> {
     })
 }
 
+/// Layered aging: decay every memory by the half-life of its tier and report how
+/// many changed. Default output is `aged <n>`; `--json` returns
+/// `{"aged": n, "elapsed_sec": N}`.
+pub fn age(manager: &MemoManager, elapsed_sec: i64, as_json: bool) -> Result<String> {
+    let n = manager.age(elapsed_sec)?;
+    if as_json {
+        let out = serde_json::json!({ "aged": n, "elapsed_sec": elapsed_sec });
+        return Ok(serde_json::to_string_pretty(&out).unwrap_or_default());
+    }
+    Ok(format!("aged {n}"))
+}
+
 /// Batch hybrid search over multiple queries (one per entry in `queries`).
 pub fn search_batch(
     manager: &MemoManager,
@@ -639,6 +651,25 @@ mod tests {
             list(&m, Some("bogus"), false),
             Err(MemoError::InvalidParam(_))
         ));
+    }
+
+    #[test]
+    fn cli_age_decays_and_formats() {
+        let m = mgr();
+        let id = add(&m, "working", "fresh memory", 1.0).unwrap();
+        // One Working half-life -> importance halves, one memory aged.
+        assert_eq!(age(&m, 60 * 60, false).unwrap(), "aged 1");
+        let got: serde_json::Value = serde_json::from_str(&get(&m, &id).unwrap()).unwrap();
+        assert!((got["importance"].as_f64().unwrap() - 0.5).abs() < 1e-6);
+        assert_eq!(got["version"], 2);
+        // JSON form mirrors the count.
+        let out: serde_json::Value =
+            serde_json::from_str(&age(&m, 60 * 60, true).unwrap()).unwrap();
+        assert_eq!(out["aged"], 1);
+        assert_eq!(out["elapsed_sec"], 3600);
+        // Invalid elapsed is an error, never a silent no-op.
+        assert!(matches!(age(&m, 0, false), Err(MemoError::InvalidParam(_))));
+        assert!(matches!(age(&m, -1, true), Err(MemoError::InvalidParam(_))));
     }
 
     #[test]
