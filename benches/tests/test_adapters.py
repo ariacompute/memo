@@ -67,8 +67,12 @@ class TestControlAdapters(unittest.TestCase):
         self.assertIsNotNone(build_backend("sqlite_vec"))
         self.assertIsNotNone(build_backend("chromem"))
 
-    def test_agentmem_registered(self):
-        self.assertEqual(build_backend("agentmem").info().name, "agentmem")
+    def test_agentmem_not_registered(self):
+        for name in ("agentmem", "agent-mem"):
+            backend = build_backend(name)
+            self.assertIsInstance(backend, SkipBackend)
+            self.assertFalse(backend.info().available)
+            self.assertIn("unknown system", backend.info().reason)
 
     def test_removed_systems_skip_with_reason(self):
         for name in ("memos", "mempalace"):

@@ -11,7 +11,7 @@ class TestRunDefaults(unittest.TestCase):
         self.assertEqual(DEFAULT_SIZES, "1000,10000,100000")
         self.assertEqual(args.sizes, DEFAULT_SIZES)
         self.assertEqual(args.systems, DEFAULT_SYSTEMS)
-        self.assertIn("agentmem", args.systems)
+        self.assertNotIn("agentmem", args.systems)
         for legacy in ("memos", "mempalace"):
             self.assertNotIn(legacy, args.systems)
 

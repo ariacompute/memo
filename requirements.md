@@ -294,7 +294,7 @@ pub fn graph_bfs(
 
 ## 6. 业界对比与评测（M2）
 
-> 对比系统固定为：mem0 / agentmem / Zep / Letta；另含本地控制组 `sqlite_vec` / `chromem`。
+> 对比系统固定为：mem0 / Zep / Letta；另含本地控制组 `sqlite_vec` / `chromem`。
 > 工程约定：评测编排与适配器一律放在 `benches/`（Python），**不**新增 `crates/bench`。
 
 ### 6.1 评测分层
@@ -310,7 +310,7 @@ pub fn graph_bfs(
 
 - 文档：`docs/compare.md`。
 - 维度至少含：三层记忆、类型（episodic/semantic/entity/graph）、CRUD、混合检索、巩固/去重/遗忘、写路径是否依赖 LLM、嵌入是否可离线、持久化、多端同步、图记忆、多模态、语言/运行时、边缘/移动就绪。
-- 每格：`✅` / `⚠️` / `❌` + 一句依据；aria 与其余四系统均须填满。
+- 每格：`✅` / `⚠️` / `❌` + 一句依据；aria 与其余对比系统均须填满。
 
 ### 6.3 Track A — 微基准与检索质量
 
@@ -319,7 +319,7 @@ pub fn graph_bfs(
 - 规模：**多尺寸 sweep** `1k` / `10k` / `100k`（CLI `--sizes`，默认 `1000,10000,100000`）；`search` top-k ∈ {5, 10}。
 - 扩展曲线：对每个 size 测 `add` / `search` 的 p50 / p99（ms）与吞吐（ops/s），跨尺寸计算 **p99 增长因子**（`p99@10k / p99@1k`、`p99@100k / p99@10k`），报告亚线性判定（增长因子 < 尺寸倍率即亚线性）。
 - 写长尾压测：aria CLI `bench` 新增 `--wal` / `--batch-embed` / `--bulk`，分别报告 `add_baseline`（默认 journal + 逐条嵌入+事务）、`add_wal`（WAL 模式）、`add_batch_embed`（`add_batch` 批量嵌入+事务合并）、`add_bulk`（逐条嵌入+`add_batch` 事务合并）的 p50/p99/ops，观察 add p99 是否收敛。
-- 本地控制组：**`sqlite_vec`**（pip `sqlite-vec`，本地 SQLite 向量索引 + 离线哈希-n-gram 嵌入）与 **`chromem`**（chromem-go 二进制子进程，离线）纳入默认 `--systems`，缺依赖/二进制时 skip 并写 `reason`，让对比矩阵有真实数值；`agentmem` 同为默认本地控制组（Go HTTP 服务，`AGENTMEM_BIN`，查询前重建 memory 投影），缺二进制时 skip。
+- 本地控制组：**`sqlite_vec`**（pip `sqlite-vec`，本地 SQLite 向量索引 + 离线哈希-n-gram 嵌入）与 **`chromem`**（chromem-go 二进制子进程，离线）纳入默认 `--systems`，缺依赖/二进制时 skip 并写 `reason`，让对比矩阵有真实数值。
 - 他系统：经 `benches/adapters/*` 调用；缺依赖/密钥时 skip 并写入报告原因，不得静默失败。
 
 **A2 合成检索质量**
@@ -353,7 +353,7 @@ benches/
   metrics/            # f1 / bleu / 多选 / recall@k / mean_std 等离线指标
   judge.py            # OpenAI 兼容 judge 客户端（可选）
   datasets.py         # 数据集定位与下载
-  adapters/           # aria / sqlite_vec / chromem / agentmem / mem0 / zep / letta
+  adapters/           # aria / sqlite_vec / chromem / mem0 / zep / letta
   data/               # synthetic_retrieval.json + synthetic_retrieval_v2.json；fixtures/ 各基准极小合成样例
   tests/              # Python 单测（离线、零网络、零真实 LLM）
   results/            # 生成结果（样例可入库，大体量 gitignore）
@@ -367,12 +367,12 @@ benches/
 
 ### 6.7 M2 验收标准
 
-- `docs/compare.md` 覆盖五系统 + aria，维度齐全。
+- `docs/compare.md` 覆盖对比系统（mem0 / Zep / Letta）+ aria，维度齐全。
 - `python benches/run.py --track a` 在默认小规模下可复现；结果写入 `benches/results/`。
 - Track A 合成检索对 aria 产出 Recall@k / MRR 数值。
 - `python benches/run.py --track b --dry-run` 能走通四基准加载与能力探测；真实打分在 fixture 下离线可跑（F1/BLEU/多选/Recall@k 出数值），judge 指标在缺密钥时 skip 并写原因。
 - `cargo test` / clippy 仍全绿；新增 CLI `update` 与 `list --json` / `search --json` 有单测，默认输出形态不变（既有断言不破坏）。
-- 五系统 adapter 均存在且实现同一基类接口；不可用时报告 N/A + 原因。
+- 各对比系统 adapter 均存在且实现同一基类接口；不可用时报告 N/A + 原因。
 - 下载脚本在缺网络时抛错并打印手动指引，不静默失败。
 
 ### 6.8 M6 验收标准（Track A 扩展：规模/控制组/方差/写长尾）

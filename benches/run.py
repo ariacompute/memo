@@ -16,7 +16,7 @@ from track_b import BENCHMARKS, dry_run, run_track_b  # noqa: E402
 from adapters import build_backend  # noqa: E402
 from judge import Judge  # noqa: E402
 
-DEFAULT_SYSTEMS = "aria,sqlite_vec,chromem,agentmem,mem0,zep,letta"
+DEFAULT_SYSTEMS = "aria,sqlite_vec,chromem,mem0,zep,letta"
 DEFAULT_SIZES = "1000,10000,100000"
 
 

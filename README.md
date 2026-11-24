@@ -219,7 +219,7 @@ The default `LocalRelationScorer` is fully local (semantic = cosine, temporal = 
 
 ## 📊 Benchmarks & comparison
 
-Compare against: mem0 / agentmem / Zep / Letta, plus local **control groups** `sqlite_vec`, `chromem` and `agentmem` (included by default; skipped with a recorded `reason` when their dependency/binary is missing — never faked). `agentmem` is driven as a local HTTP service via `AGENTMEM_BIN`.
+Compare against: mem0 / Zep / Letta, plus local **control groups** `sqlite_vec` and `chromem` (included by default; skipped with a recorded `reason` when their dependency/binary is missing — never faked).
 
 - Feature matrix: [docs/compare.md](./docs/compare.md)
 - Results guide: [docs/bench_results.md](./docs/bench_results.md)
@@ -355,7 +355,7 @@ All detailed docs live under [`docs/`](./docs):
 
 | Document | What it covers |
 |---|---|
-| [Feature matrix](./docs/compare.md) | memo vs mem0 / agentmem / Zep / Letta + local control groups |
+| [Feature matrix](./docs/compare.md) | memo vs mem0 / Zep / Letta + local control groups |
 | [Benchmark results](./docs/bench_results.md) | Track A/B methodology and results |
 | [Benchmark harness](./benches/README.md) | Python orchestration (Track A storage/retrieval + Track B end-to-end) |
 | [Requirements](./requirements.md) | feature boundaries / exceptions / acceptance criteria |

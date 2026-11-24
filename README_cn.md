@@ -219,7 +219,7 @@ cargo run -p aria-memo -- search --text "Rust" --graph
 
 ## 📊 对比评测
 
-对比系统：mem0 / agentmem / Zep / Letta，外加本地**控制组** `sqlite_vec`、`chromem` 与 `agentmem`（默认纳入；其依赖/二进制缺失时按 `reason` 跳过并写原因，绝不伪造数值）。`agentmem` 通过 `AGENTMEM_BIN` 以本地 HTTP 服务方式接入。
+对比系统：mem0 / Zep / Letta，外加本地**控制组** `sqlite_vec`、`chromem`（默认纳入；其依赖/二进制缺失时按 `reason` 跳过并写原因，绝不伪造数值）。
 
 - 功能矩阵：[docs/compare.md](./docs/compare.md)
 - 评测说明与结果：[docs/bench_results.md](./docs/bench_results.md)
@@ -355,7 +355,7 @@ scripts/check-emudhra.sh /etc/ssl/certs/ca-certificates.crt
 
 | 文档 | 覆盖内容 |
 |---|---|
-| [功能矩阵](./docs/compare.md) | memo vs mem0 / agentmem / Zep / Letta + 本地控制组 |
+| [功能矩阵](./docs/compare.md) | memo vs mem0 / Zep / Letta + 本地控制组 |
 | [评测结果](./docs/bench_results.md) | Track A/B 方法论与结果 |
 | [评测编排](./benches/README.md) | Python 编排（Track A 存储/检索 + Track B 端到端） |
 | [需求规格](./requirements.md) | 功能边界 / 异常 / 验收标准 |

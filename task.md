@@ -19,14 +19,14 @@
 
 ## M2 — 业界功能/性能评测（A + B）
 
-> 对比系统：mem0 / agentmem / Zep / Letta；本地控制组 `sqlite_vec` / `chromem` / `agentmem`。编排工程：`benches/`（Python），不采用 `crates/bench`。
+> 对比系统：mem0 / Zep / Letta；本地控制组 `sqlite_vec` / `chromem`。编排工程：`benches/`（Python），不采用 `crates/bench`。
 
 10. [x] `requirements.md` §6 增补 Track A/B、矩阵、验收；本清单同步
-11. [x] `docs/compare.md` 功能对比矩阵（aria + 五系统）
+11. [x] `docs/compare.md` 功能对比矩阵（aria + 对比系统）
 12. [x] CLI `memo bench --json`（进程内 add/search 微基准，供 Python 解析）
 13. [x] `benches/` 脚手架：`common` / `adapters` / `track_a` / `track_b` / `data` / `results` / `run.py`
 14. [x] Track A：微基准汇总（1k/10k）+ 合成检索 Recall@k / MRR（aria 必跑；他系统按可用性）
-15. [x] Track B：LoCoMo / LongMemEval / BEAM runner 骨架 + dry-run；五系统 adapter 接口齐全
+15. [x] Track B：LoCoMo / LongMemEval / BEAM runner 骨架 + dry-run；各对比系统 adapter 接口齐全
 16. [x] 文档：`benches/README.md`、`docs/bench_results.md`、根 README / AGENTS 链到评测
 
 ## M3 — Track B 四基准真实评测管线（已落地）
@@ -47,7 +47,7 @@
 27. [x] 文档同步：`benches/README.md` / `data/README.md` / `docs/compare.md` / `docs/bench_results.md` / `AGENTS.md`
 28. [x] 验收：`cargo test` + `cargo clippy --all-targets` 全绿；`python -m unittest discover -s benches/tests -t benches` 与 `python -m pytest benches/tests` 离线全绿；`run.py --track b --benchmarks locomo_refined --ingest-only` 等可跑
 
-**已知限制**：MemOS / MemPalace adapter 已移除（永久 stub，无法出数）；本地控制组 `agentmem` 需自行构建 Go 二进制并设置 `AGENTMEM_BIN`，其 adapter 通过本机 HTTP 服务接入并在查询前执行 `canonical_to_rag` 投影；云服务（mem0 / Zep / Letta）仍依赖密钥，缺凭据 skip + reason。
+**已知限制**：MemOS / MemPalace adapter 已移除（永久 stub，无法出数）；云服务（mem0 / Zep / Letta）仍依赖密钥，缺凭据 skip + reason。
 
 ## M4 — 多关系记忆平面（Jev-Mem 启发，已落地）
 
@@ -143,9 +143,9 @@
 4. [x] 文档环境变量名 `ARIA_MEMORY_BIN` → `ARIA_MEMO_BIN`（3 处）。
 5. [x] ci/release 配置 `LINDERA_BUILD_DICTIONARY_CACHE_DIR` + `actions/cache`；新增 `scripts/prefetch-lindera.sh`；构建期网络承诺改为如实描述。
 6. [x] 补 `search` 损坏 metadata 行在 FTS 候选/全表两路径的 `Serialization` 用例；覆盖率声明改为实测 Lines/Functions 100%、Regions 97.80%。
-7. [x] task.md M3 17–28 勾选并补「已知限制」（MemOS/MemPalace 移除、agentmem 需 `AGENTMEM_BIN`）。
+7. [x] task.md M3 17–28 勾选并补「已知限制」（MemOS/MemPalace 移除）。
 8. [x] `benches/tests/__init__.py` 支持 unittest discover 与 pytest 两种发现方式。
-9. [x] 移除 MemOS / MemPalace adapter 与全部文档引用；新增本地 HTTP `agentmem` adapter（含单测与真实二进制冒烟）。
+9. [x] 移除 MemOS / MemPalace adapter 与全部文档引用；本地控制组保留 `sqlite_vec` / `chromem`。
 10. [x] `add --type` 严格报错；新增 Working/ShortTerm/LongTerm 半衰期策略；`graph_bfs` 修正为真实 best-score 语义并补多路径用例。
 
 ## 本轮修复 — 完整度评估 v2 §8 第 1/2/3/5 项（已完成）
@@ -153,7 +153,7 @@
 > 依据 `memo-completeness-assessment-v2.md` §8「建议的修复顺序」。第 4 项（恢复 MemOS/MemPalace 定性对标列）按评估方语境暂不改动。
 
 1. [x] **N1 HaluMem「记忆更新」寻址**：`track_b/halumem/__init__.py` 在 ingest 期记录 `上游 MemoryID -> backend.add() 返回 id` 映射；`_run_updating` 三级寻址（映射 → `list_memories` 按 gold `Content` 精确匹配 → `id_unmapped`），失败分 `update_failed` / `id_unmapped` 计数并写入 `Score.reason` + `stderr`，删除 `except: pass`；`benches/tests/test_track_b.py` 新增映射命中、无 ingest 回退、未映射、更新失败 4 条用例。
-2. [x] **N2 数值口径收口**：`docs/compare.md` 的 Track A 控制组表用 `README.md` 参考运行实测值填充（aria add p99 13.35/4.08/0.02 并标注分段；sqlite_vec 0.04/0.04/0.05、Recall 0.9762；chromem 0.05/0.04/0.04、Recall 1.00），`agentmem` 标 `skipped`；脚注写明数据来源、分段不可比与 `benches/results/` 未入库，删除 `_run_` 占位。
+2. [x] **N2 数值口径收口**：`docs/compare.md` 的 Track A 控制组表用 `README.md` 参考运行实测值填充（aria add p99 13.35/4.08/0.02 并标注分段；sqlite_vec 0.04/0.04/0.05、Recall 0.9762；chromem 0.05/0.04/0.04、Recall 1.00）；脚注写明数据来源、分段不可比与 `benches/results/` 未入库，删除 `_run_` 占位。
 3. [x] **N3 分层老化编排入口**：`MemoManager::age(elapsed_sec) -> Result<usize>`（`<=0` → `InvalidParam`；按 tier 半衰期衰减、仅变化条目 `version+1` 并回写）；`memo/src/lib.rs` re-export `half_life_for` / `decay_importance_by_tier` / 三个半衰期常量；CLI 新增 `memo age --elapsed-sec <N> [--json]`（默认 `aged <n>`，JSON `{"aged": n, "elapsed_sec": N}`），含 commands 单测与二进制 e2e。
 5. [x] **`StorageBackend` 对齐规格 §2.2**：新增 `open(location)`（`where Self: Sized`）与原始记录 CRUD（`put_record` upsert / `get_record` / `delete_record` / `scan_records`）；`SqliteStore` 委托既有存储方法（`put_record` 先 `validate` 再 upsert），`ReplicatedBackend` 全部 fail closed（`MemoError::Other`）且 `open` 改为 `Result<Self>`；两处实现均补正常/异常单测。
 

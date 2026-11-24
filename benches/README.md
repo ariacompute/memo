@@ -7,7 +7,7 @@
 | **A** | 微基准（延迟/吞吐）+ 合成检索 Recall@k / MRR | `aria-memo` CLI；他系统按 SDK |
 | **B** | 四基准端到端：locomo_refined / halumem / longmemeval / personamem | 离线指标零网络；judge 指标需 OpenAI 兼容 LLM（缺则 skip） |
 
-对比系统（默认 `--systems`）：`aria` / `sqlite_vec` / `chromem` / `agentmem` / `mem0` / `zep` / `letta`。其中 `sqlite_vec`、`chromem`、`agentmem` 为**本地控制组**（默认纳入，缺依赖/二进制时自动 skip）。`--sizes` 默认 `1000,10000,100000`；需要单尺寸时用 `--sizes 1000`（空字符串配合 `--size` 亦可）。
+对比系统（默认 `--systems`）：`aria` / `sqlite_vec` / `chromem` / `mem0` / `zep` / `letta`。其中 `sqlite_vec`、`chromem` 为**本地控制组**（默认纳入，缺依赖/二进制时自动 skip）。`--sizes` 默认 `1000,10000,100000`；需要单尺寸时用 `--sizes 1000`（空字符串配合 `--size` 亦可）。
 
 > Track A 扩展（M6）：多尺寸扩展曲线、本地控制组、A2 大查询集 + 方差、写长尾压测。详见下。
 
@@ -43,7 +43,7 @@ python benches/run.py --track a --a2-dataset track_b:halumem
 # 写长尾压测（aria 进程内 bench；需先 cargo build -p aria-memo --release）
 aria-memo bench --size 10000 --top-k 5 --wal --batch-embed --bulk --json
 
-python benches/run.py --track a --sizes 1000 --systems aria,agentmem,mem0,zep,letta
+python benches/run.py --track a --sizes 1000 --systems aria,mem0,zep,letta
 python benches/run.py --track b --dry-run
 python benches/run.py --track b --benchmarks locomo_refined,halumem,longmemeval,personamem --backend aria
 python benches/run.py --track b --download            # 自动拉取缺失数据集
@@ -61,7 +61,6 @@ python benches/run.py --track all --sizes 500 --dry-run
 | `BENCH_LLM_BASE_URL` | OpenAI 兼容 base url（默认官方） |
 | `BENCH_LLM_MODEL` / `--judge-model` | judge 模型名（报告标注实际模型） |
 | `MEM0_API_KEY` | mem0 托管 |
-| `AGENTMEM_BIN` | 本地 agentmem 可执行文件路径（缺则 skip；用 `go build -o bin/agentmem ./cmd/agentmem` 构建） |
 | `ZEP_API_KEY` | Zep |
 | `LETTA_*` | Letta |
 | `CHROMEM_BIN` | chromem-go 可执行文件路径（控制组；缺则 skip） |
@@ -81,7 +80,7 @@ benches/
   metrics/         # 离线指标：F1 / BLEU / 多选 / Recall@k
   judge.py         # OpenAI 兼容 judge 客户端（可选）
   datasets.py      # 数据集定位与下载
-  adapters/        # 统一 MemoBackend 接口；aria / sqlite_vec / chromem / agentmem / mem0 / zep / letta
+  adapters/        # 统一 MemoBackend 接口；aria / sqlite_vec / chromem / mem0 / zep / letta
   track_a/         # 微基准 + 合成检索
     datasets.py    # A2 查询集加载（synthetic / synthetic_v2 / track_b:*）
   track_b/         # 四基准注册表（locomo_refined/halumem/longmemeval/personamem）

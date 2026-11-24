@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from .agentmem import AgentMemBackend
 from .aria_memo import AriaMemoBackend
 from .base import BackendInfo, MemoBackend, SearchHit, UnsupportedCapability
 from .chromem import ChromemBackend
@@ -19,8 +18,6 @@ def build_backend(name: str) -> MemoBackend:
         return SqliteVecBackend()
     if key == "chromem":
         return ChromemBackend()
-    if key in {"agentmem", "agent-mem"}:
-        return AgentMemBackend()
     if key == "mem0":
         return Mem0Backend()
     if key == "zep":
@@ -31,7 +28,6 @@ def build_backend(name: str) -> MemoBackend:
 
 
 __all__ = [
-    "AgentMemBackend",
     "AriaMemoBackend",
     "BackendInfo",
     "ChromemBackend",

@@ -8,7 +8,7 @@ export ARIA_MEMO_BIN="$(pwd)/target/release/aria-memo"
 pip install -r benches/requirements.txt
 
 python benches/run.py --track a --sizes 1000 --systems aria
-python benches/run.py --track a --sizes 1000 --systems aria,agentmem,mem0,zep,letta
+python benches/run.py --track a --sizes 1000 --systems aria,mem0,zep,letta
 python benches/run.py --track b --dry-run --backend aria
 python benches/run.py --track b --backend aria                 # 离线指标，judge 自动 skip
 export BENCH_LLM_API_KEY=...                                   # 可选：启用 judge 指标
@@ -46,4 +46,3 @@ python benches/run.py --track b --download                     # 拉取缺失数
 1. **A 层**才是 aria 与托管产品同口径主战场（延迟、离线、包体）。
 2. **B 层**离线指标无需 LLM 即可真跑；judge 指标依赖模型，缺凭据时 `skipped` + `reason`，不伪造分数。
 3. aria 微基准走 `memo bench --json`（进程内），不含进程启动摊销。
-4. `agentmem` 控制组需 `AGENTMEM_BIN`；适配器启动本机 HTTP 服务并在查询前重建 memory 投影，缺二进制时 `skipped` + `reason`。
